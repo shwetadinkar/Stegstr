@@ -31,3 +31,7 @@ website/
 stegstr-website.zip
 calibration/charts/
 calibration/__pycache__/
+calibration/rec/*
+!calibration/rec/manifest.json
+calibration/sweep/*
+!calibration/sweep/manifest.json
