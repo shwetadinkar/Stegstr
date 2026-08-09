@@ -29,3 +29,5 @@ dist-ssr
 # Website and browser app — hosted separately, not part of this repo
 website/
 stegstr-website.zip
+calibration/charts/
+calibration/__pycache__/
