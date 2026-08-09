@@ -20,6 +20,7 @@
     "test:e2e": "node tests/e2e/run-permutations.mjs"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.3.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "@tauri-apps/api": "^2",
@@ -31,6 +32,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.5",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

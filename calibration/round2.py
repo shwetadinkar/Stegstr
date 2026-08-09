@@ -48,17 +48,85 @@ from recover import (ZIGZAG, ID_BITS, ID_CELL, ID_MARGIN, D, fwd, inv, q_emb, q_
                      to_bits, from_bits)
 
 NSYM = 64
-WIDTHS = [1080, 1600]
+WIDTHS = [1080, 1440, 1600]
 PAYLOADS = [32, 4096, 16384, 32768]
 CONFIGS = [
     ("matched_d4", "channel", 4, 1, 12, 2),
     ("matched_d6", "channel", 6, 1, 12, 2),
+    # Instagram sweep. Its grid survives at 1440 native, and its quantization
+    # is gentle (steps 5-25), so the residual damage is not quantization -- it
+    # behaves like sharpening: a roughly fixed perturbation that scales with
+    # local texture. That is an amplitude problem, so the lever is a bigger
+    # QIM step, and secondarily lower frequencies (sharpening boosts high
+    # frequencies hardest) and heavier repetition.
+    ("ig_d10", "channel", 10, 1, 12, 2),
+    ("ig_d16", "channel", 16, 1, 12, 2),
+    ("ig_d24", "channel", 24, 1, 12, 2),
+    ("ig_d16_low", "channel", 16, 1, 6, 2),
+    ("ig_d10_low", "channel", 10, 1, 6, 2),
+    ("ig_d24_low", "channel", 24, 1, 6, 2),
+]
+
+# Worst-case grid: the smallest set that can still falsify the design.
+# (width, config, payload)
+#   1080 + max payload      -> Instagram-safe size at its capacity ceiling
+#   1080 + weaker delta     -> least robust step size, at capacity
+#   1600 + max payload      -> DELIBERATELY oversized for Instagram (1080 cap),
+#                              so Instagram must resize it. Expected to fail;
+#                              confirms the size rule rather than assuming it.
+#                              Telegram caps at 1920, so the same file should
+#                              pass there — the asymmetry is the evidence.
+#   1080 + tiny payload     -> control; if this fails, something else is wrong
+WORST_CASE = [
+    (1080, "matched_d6", 4096),
+    (1080, "matched_d4", 4096),
+    (1600, "matched_d6", 4096),
+    (1080, "matched_d6", 32),
+]
+
+# Instagram always outputs a 1440x1440 canvas (measured). Uploading AT that
+# size should mean no resampling at all -- the same rule that made WhatsApp
+# work once we stopped exceeding its cap. Its quantization table is also very
+# gentle (steps 5-25, vs WhatsApp's 6-167), so if the grid survives, error
+# rates should be lower than WhatsApp's rather than higher.
+IG_NATIVE = [
+    (1440, "matched_d6", 4096),
+    (1440, "matched_d4", 4096),
+    (1440, "matched_d6", 32),
+    (1440, "matched_d6", 16384),
+]
+
+# Step-size sweep at Instagram's native 1440, plus a low-frequency-only arm.
+IG_SWEEP = [
+    (1440, "ig_d10", 4096),
+    (1440, "ig_d16", 4096),
+    (1440, "ig_d24", 4096),
+    (1440, "ig_d10_low", 4096),
+    (1440, "ig_d16_low", 4096),
+    (1440, "ig_d24_low", 4096),
+    (1440, "ig_d16", 512),
+    (1440, "ig_d16_low", 16384),
 ]
 
 
-def load_ycc(path: str, width: int) -> tuple[np.ndarray, Image.Image, Image.Image]:
+def load_ycc(path: str, width: int, square: bool = False) -> tuple[np.ndarray, Image.Image, Image.Image]:
+    """
+    Load a cover and size it for the target channel.
+
+    square=True centre-crops to 1:1 before resizing. Instagram forces every
+    image to a square canvas: a 4:3 upload comes back PADDED to square and
+    rescaled (measured: 1080x808 in, 1440x1440 out). Padding moves the 8x8
+    block grid origin and rescaling changes its spacing, so block-aligned QIM
+    desynchronises completely. Supplying a square image leaves Instagram
+    nothing to pad, which is the cheapest way to keep the grid intact.
+    """
     img = Image.open(path).convert("RGB")
-    if img.width != width:
+    if square:
+        s = min(img.width, img.height)
+        left, top = (img.width - s) // 2, (img.height - s) // 2
+        img = img.crop((left, top, left + s, top + s))
+        img = img.resize((width, width), Image.Resampling.LANCZOS)
+    elif img.width != width:
         img = img.resize((width, max(1, round(img.height * width / img.width))),
                          Image.Resampling.LANCZOS)
     ycc = img.convert("YCbCr")
@@ -93,20 +161,36 @@ def slots_for(nby: int, nbx: int, lo: int, hi: int) -> list:
 
 
 def cmd_embed(args) -> None:
-    prof = json.loads(Path(args.profiles).read_text())["platforms"][0]
+    profs = json.loads(Path(args.profiles).read_text())["platforms"]
+    prof = next((p for p in profs if p["platform"] == args.platform), profs[0])
     ch_qt = np.array(prof["luma_qtable"], float).reshape(8, 8)
     tables = {"channel": ch_qt, "pillow_q75": pillow_table(75)}
+    print(f"channel: {prof['platform']}  qtable steps "
+          f"{int(ch_qt.min())}-{int(ch_qt.max())}\n")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(90909)
     recs, vid = [], 0
 
-    for width in WIDTHS:
-        base_y, cb, cr = load_ycc(args.image, width)
-        for cname, tname, delta, lo, hi, ss in CONFIGS:
+    if args.grid == "worst":
+        combos = [(w, c, p) for (w, c, p) in WORST_CASE]
+    elif args.grid == "ig":
+        combos = [(w, c, p) for (w, c, p) in IG_NATIVE]
+    elif args.grid == "igsweep":
+        combos = [(w, c, p) for (w, c, p) in IG_SWEEP]
+    else:
+        combos = [(w, c[0], p) for w in WIDTHS for c in CONFIGS for p in PAYLOADS]
+    cfg_by_name = {c[0]: c for c in CONFIGS}
+
+    for width in sorted({w for w, _, _ in combos}):
+        base_y, cb, cr = load_ycc(args.image, width, square=args.square)
+        for cname in [c[0] for c in CONFIGS]:
+            if not any(w == width and c == cname for w, c, _ in combos):
+                continue
+            _, tname, delta, lo, hi, ss = cfg_by_name[cname]
             qt = tables[tname]
-            for psize in PAYLOADS:
+            for psize in [p for w, c, p in combos if w == width and c == cname]:
                 probe = fwd(base_y, qt)
                 nby, nbx = probe.shape[0], probe.shape[1]
                 slots = slots_for(nby, nbx, lo, hi)
@@ -117,7 +201,8 @@ def cmd_embed(args) -> None:
                     print(f"  --  {cname:<11} {width}px {psize:>6}B  needs {need:,} "
                           f"slots, has {len(slots):,} — skipped")
                     continue
-                repeat = max(1, min(3, len(slots) // need))
+                cap = args.repeat if args.repeat else 3
+                repeat = max(1, min(cap, len(slots) // need))
                 bits = to_bits(cw) * repeat
 
                 vid += 1
@@ -232,6 +317,14 @@ def main() -> None:
     e.add_argument("--image", required=True)
     e.add_argument("--out", default="r2")
     e.add_argument("--profiles", default="measured_profiles.json")
+    e.add_argument("--grid", choices=["full", "worst", "ig", "igsweep"], default="full",
+                   help="'worst' emits only the 4 hardest cases")
+    e.add_argument("--repeat", type=int, default=0,
+                   help="max repetition factor (0 = auto, capped at 3)")
+    e.add_argument("--platform", default="whatsapp",
+                   help="which measured profile to embed against")
+    e.add_argument("--square", action="store_true",
+                   help="centre-crop to 1:1 (required for Instagram)")
     e.set_defaults(func=cmd_embed)
     d = s.add_parser("decode")
     d.add_argument("--manifest", default="r2/manifest.json")

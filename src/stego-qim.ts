@@ -28,6 +28,25 @@ import { RSCodec } from "./reed-solomon";
 // Constants (matching Python dct_variants.py)
 // ---------------------------------------------------------------------------
 
+import {
+  PLATFORM_PROFILES, DETECT_DELTAS, profileFor,
+  blockActivity, deltaForBlock, LADDER_MEAN,
+} from "./stego-adaptive";
+
+/**
+ * Coefficients used to gauge local texture: zigzag 25-40, i.e. ABOVE the
+ * embedding band (1-24). Measuring on positions we never write to means the
+ * act of embedding cannot move the measurement the decoder has to reproduce.
+ */
+const ACTIVITY_COEFF_INDICES: number[] = (() => {
+  const out: number[] = [];
+  for (let z = 25; z <= 40; z++) {
+    const [dy, dx] = ZIGZAG_2D[z];
+    out.push(dy * 8 + dx);
+  }
+  return out;
+})();
+
 const MAGIC = new Uint8Array([0x53, 0x54, 0x45, 0x47, 0x53, 0x54, 0x52]); // "STEGSTR"
 const MAGIC_LEN = 7;
 const LENGTH_BYTES = 4;
@@ -43,18 +62,19 @@ const QIM_ERASURE_MARGIN = QIM_DELTA / 6.0;
 // ---------------------------------------------------------------------------
 
 /** Platform target widths for pre-resize. */
-export const PLATFORM_WIDTHS: Record<string, number> = {
-  instagram: 1080,
-  facebook: 2048,
-  twitter: 1600,
-  whatsapp_standard: 1600,
-  whatsapp_hd: 4096,
-  telegram_photo: 1920,
-  imessage: 1280,
-  none: 0,
-};
+/**
+ * Target widths, now derived from measured platform behaviour rather than
+ * assumption. See stego-adaptive.ts for how each number was obtained.
+ *
+ * The two that changed matter: instagram was 1080, which is upscaled to 1440
+ * and measured 42-50% BER (no recovery at all); whatsapp_hd was 4096, which is
+ * downscaled to 1600 with the same result.
+ */
+export const PLATFORM_WIDTHS: Record<string, number> = Object.fromEntries(
+  Object.entries(PLATFORM_PROFILES).map(([k, v]) => [k, v.width]),
+);
 
-export const DEFAULT_PLATFORM = "instagram";
+export const DEFAULT_PLATFORM = "whatsapp_standard";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -71,6 +91,12 @@ export interface QimOptions {
   rsNsym?: number;
   /** Whether to compress payload with deflate before embedding. Default true. */
   compress?: boolean;
+  /**
+   * Scale the QIM step by local texture. Same mean step, but concentrated
+   * where the image can hide it: measured 2.0x less visible perturbation at
+   * identical payload. Default true.
+   */
+  adaptive?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +381,7 @@ export async function embedQim(
   const repeat = options?.repeat ?? QIM_REPEAT;
   const rsNsym = options?.rsNsym ?? QIM_RS_NSYM;
   const compress = options?.compress ?? true;
+  const adaptive = options?.adaptive ?? true;
 
   // Step 1: Decode JPEG to pixel data
   const { data: pixels, width, height } = await decodeJpegToPixels(imageData);
@@ -428,6 +455,12 @@ export async function embedQim(
     // Quantize (simulate JPEG quantization)
     const qCoeffs = quantize(dctCoeffs, qt);
 
+    // Per-block step size. Computed from coefficients outside the embedding
+    // band so this same number is recoverable at detect time.
+    const blockDelta = adaptive
+      ? deltaForBlock(delta, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
+      : delta;
+
     // Apply QIM to the AC positions that need embedding for this block
     let modified = false;
     const blocksPerPlane = blocksY * blocksX;
@@ -439,7 +472,7 @@ export async function embedQim(
       const [dy, dx] = zigzagIndexTo2d(zi);
       const coeffIdx = dy * 8 + dx;
       const c = qCoeffs[coeffIdx];
-      const newC = qimEmbed(c, bits[streamIdx], delta);
+      const newC = qimEmbed(c, bits[streamIdx], blockDelta);
       if (newC !== c) {
         qCoeffs[coeffIdx] = newC;
         modified = true;
@@ -504,6 +537,7 @@ export async function detectQim(
   const rsNsym = options?.rsNsym ?? QIM_RS_NSYM;
   const compress = options?.compress ?? true;
   const quality = options?.quality ?? QIM_EMBED_QUALITY;
+  const adaptive = options?.adaptive ?? true;
 
   try {
     // Step 1: Decode JPEG to pixel data
@@ -522,6 +556,7 @@ export async function detectQim(
 
     // Cache DCT coefficients per block
     const blockDctCache = new Map<string, Float64Array>();
+    const blockDeltaCache = new Map<string, number>();
 
     for (const { blockRow, blockCol, zigzagIdx } of stream) {
       const key = `${blockRow},${blockCol}`;
@@ -531,12 +566,16 @@ export async function detectQim(
         const dctCoeffs = forwardDCT8x8(pixelBlock);
         qCoeffs = quantize(dctCoeffs, qt);
         blockDctCache.set(key, qCoeffs);
+        blockDeltaCache.set(key, adaptive
+          ? deltaForBlock(delta, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
+          : delta);
       }
+      const blockDelta = blockDeltaCache.get(key) ?? delta;
 
       const [dy, dx] = zigzagIndexTo2d(zigzagIdx);
       const coeffIdx = dy * 8 + dx;
       const c = qCoeffs[coeffIdx];
-      const [bit, margin] = qimDetectWithMargin(c, delta);
+      const [bit, margin] = qimDetectWithMargin(c, blockDelta);
       rawBits.push(bit);
       margins.push(margin);
     }
@@ -662,10 +701,16 @@ export function getQimCapacityBytes(
 export async function encodeQimImageFile(
   coverFile: File,
   payload: Uint8Array,
-  options?: QimOptions,
+  options?: QimOptions & { platform?: string },
 ): Promise<Blob> {
   const jpegBytes = new Uint8Array(await coverFile.arrayBuffer());
-  const result = await embedQim(jpegBytes, payload, options);
+  // Step size comes from the target platform unless the caller overrides it.
+  // Without this the profiles are decorative: embedQim would silently keep
+  // using QIM_DELTA, which probing shows does not survive recompression.
+  const delta = options?.delta ?? (options?.platform
+    ? profileFor(options.platform).delta
+    : undefined);
+  const result = await embedQim(jpegBytes, payload, { ...options, delta });
   return new Blob([result], { type: "image/jpeg" });
 }
 
@@ -678,7 +723,18 @@ export async function decodeQimImageFile(
 ): Promise<{ ok: boolean; payload?: string; error?: string }> {
   try {
     const jpegBytes = new Uint8Array(await file.arrayBuffer());
-    const result = await detectQim(jpegBytes, options);
+
+    // The decoder cannot know which platform an image was made for, and
+    // therefore cannot know its step size. The payload validates itself (magic
+    // bytes plus Reed-Solomon), so a wrong step fails cleanly instead of
+    // returning plausible garbage -- which makes trying a short list safe, and
+    // far better than guessing one value. The caller can still pin a delta.
+    let result: Uint8Array | null = null;
+    const candidates = options?.delta !== undefined ? [options.delta] : DETECT_DELTAS;
+    for (const delta of candidates) {
+      result = await detectQim(jpegBytes, { ...options, delta });
+      if (result && result.length > 0) break;
+    }
     if (!result || result.length === 0) {
       return { ok: false, error: "No QIM payload found" };
     }
@@ -705,28 +761,62 @@ export async function decodeQimImageFile(
 // ---------------------------------------------------------------------------
 
 /**
- * Resize a cover image to a target max width (preserving aspect ratio).
- * Converts any image format to JPEG. If the image is already <= targetWidth,
- * only JPEG conversion occurs. If targetWidth is 0, no resize — just convert to JPEG.
+ * Geometry a cover should be given before embedding, for a target platform.
+ *
+ * Exported separately so it can be unit-tested without a canvas: the whole
+ * point is that these numbers decide whether a payload survives, and they
+ * should not only be verifiable by eye in a browser.
+ *
+ * Square handling exists because Instagram normalises every upload onto a
+ * 1440x1440 canvas. A 4:3 image comes back padded to square, which shifts the
+ * 8x8 grid origin; a 1080 square comes back upscaled, which changes the grid
+ * spacing. Both destroy the payload (measured 42-50% BER). Supplying an
+ * already-square 1440 image leaves Instagram nothing to change.
+ */
+export function coverGeometry(
+  srcW: number,
+  srcH: number,
+  targetWidth: number,
+  square: boolean,
+): { w: number; h: number; sx: number; sy: number; sw: number; sh: number } {
+  let sx = 0, sy = 0, sw = srcW, sh = srcH;
+
+  if (square) {
+    // Centre-crop to 1:1 rather than pad: padding would add flat bars that
+    // carry no texture, wasting capacity and looking obviously processed.
+    const side = Math.min(srcW, srcH);
+    sx = Math.floor((srcW - side) / 2);
+    sy = Math.floor((srcH - side) / 2);
+    sw = side;
+    sh = side;
+  }
+
+  let w = sw, h = sh;
+  if (targetWidth > 0 && (square ? true : w > targetWidth)) {
+    const scale = targetWidth / w;
+    w = targetWidth;
+    h = square ? targetWidth : Math.round(h * scale);
+  }
+
+  // Snap to whole DCT blocks.
+  w = Math.floor(w / 8) * 8;
+  h = Math.floor(h / 8) * 8;
+  return { w, h, sx, sy, sw, sh };
+}
+
+/**
+ * Resize a cover image for a target platform.
+ * Converts any image format to JPEG. targetWidth 0 means no resize.
  * Dimensions are snapped to multiples of 8 for DCT block alignment.
  */
 export async function resizeCoverForPlatform(
   coverFile: File,
   targetWidth: number,
+  square = false,
 ): Promise<File> {
   const bitmap = await createImageBitmap(coverFile);
-  let w = bitmap.width;
-  let h = bitmap.height;
-
-  if (targetWidth > 0 && w > targetWidth) {
-    const scale = targetWidth / w;
-    w = targetWidth;
-    h = Math.round(h * scale);
-  }
-
-  // Snap to multiples of 8 for complete DCT blocks
-  w = Math.floor(w / 8) * 8;
-  h = Math.floor(h / 8) * 8;
+  const g = coverGeometry(bitmap.width, bitmap.height, targetWidth, square);
+  const { w, h, sx, sy, sw, sh } = g;
   if (w < 8 || h < 8) throw new Error("Image too small after resize");
 
   let blob: Blob;
@@ -734,7 +824,7 @@ export async function resizeCoverForPlatform(
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Could not get OffscreenCanvas 2d context");
-    ctx.drawImage(bitmap, 0, 0, w, h);
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, w, h);
     blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.95 });
   } else {
     const canvas = document.createElement("canvas");
@@ -742,7 +832,7 @@ export async function resizeCoverForPlatform(
     canvas.height = h;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Could not get canvas 2d context");
-    ctx.drawImage(bitmap, 0, 0, w, h);
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, w, h);
     blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
         (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),

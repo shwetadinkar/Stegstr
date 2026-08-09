@@ -11,8 +11,9 @@ import {
   resizeCoverForPlatform,
   qimSelfTest,
   getQimCapacityForFile,
+  PLATFORM_WIDTHS,
+  DEFAULT_PLATFORM,
 } from "./stego-qim";
-import { profileFor } from "./stego-adaptive";
 import { uploadMedia } from "./upload";
 import { ensureStegstrSuffix } from "./constants";
 import * as stegoCrypto from "./stego-crypto";
@@ -1569,13 +1570,10 @@ function App({ profile }: { profile: string | null }) {
 
           // Step 1: Pre-resize cover for platform
           setStegoProgress("Pre-resizing image for target platform...");
-          const platformProfile = profileFor(targetPlatform);
-          const platformWidth = platformProfile.width;
+          const platformWidth = PLATFORM_WIDTHS[targetPlatform] ?? PLATFORM_WIDTHS[DEFAULT_PLATFORM];
           let resizedCover: File;
           try {
-            resizedCover = await resizeCoverForPlatform(
-              embedCoverFile, platformWidth, platformProfile.square,
-            );
+            resizedCover = await resizeCoverForPlatform(embedCoverFile, platformWidth);
             addStegoLog(`Resized cover: ${resizedCover.name} (${resizedCover.size} bytes)`);
           } catch (e) {
             setDecodeError(`Resize failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -1600,7 +1598,7 @@ function App({ profile }: { profile: string | null }) {
           addStegoLog("Running QIM steganography encode...");
           let blob: Blob;
           try {
-            blob = await encodeQimImageFile(resizedCover, encrypted, { platform: targetPlatform });
+            blob = await encodeQimImageFile(resizedCover, encrypted);
             addStegoLog(`QIM encode complete! Output: ${blob.size} bytes JPEG`);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);

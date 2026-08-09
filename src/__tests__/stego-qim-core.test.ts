@@ -220,16 +220,34 @@ describe("PLATFORM_WIDTHS", () => {
     expect(PLATFORM_WIDTHS).toHaveProperty("none");
   });
 
-  it("instagram is smallest at 1080", () => {
-    const widths = Object.entries(PLATFORM_WIDTHS)
-      .filter(([k]) => k !== "none")
-      .map(([, v]) => v);
-    expect(Math.min(...widths)).toBe(1080);
-    expect(PLATFORM_WIDTHS.instagram).toBe(1080);
+  /**
+   * Updated from measurement. These two tests previously asserted
+   * instagram = 1080 and instagram as the default, on the assumption that
+   * Instagram caps width like WhatsApp does.
+   *
+   * It does not. Instagram normalises every upload onto a 1440x1440 square
+   * canvas: a 1080 upload is UPSCALED to 1440, which changes the spacing of
+   * the 8x8 DCT grid and destroys the payload. Round-tripped through real
+   * Instagram, 1080 measured 42-50% BER -- indistinguishable from chance.
+   * At 1440 square the grid survives and payloads recover.
+   *
+   * The default likewise moves to whatsapp_standard, which is both the most
+   * common share target and a geometry that was verified end to end.
+   */
+  it("instagram targets 1440, its native canvas size", () => {
+    expect(PLATFORM_WIDTHS.instagram).toBe(1440);
   });
 
-  it("default platform is instagram", () => {
-    expect(DEFAULT_PLATFORM).toBe("instagram");
+  it("no platform targets a width the platform will resize away", () => {
+    // Every entry must be at or below what that platform actually emits.
+    expect(PLATFORM_WIDTHS.whatsapp_standard).toBeLessThanOrEqual(1600);
+    expect(PLATFORM_WIDTHS.telegram_photo).toBeLessThanOrEqual(1920);
+    expect(PLATFORM_WIDTHS.whatsapp_hd).toBeLessThanOrEqual(1600);
+  });
+
+  it("default platform is a verified geometry", () => {
+    expect(DEFAULT_PLATFORM).toBe("whatsapp_standard");
+    expect(PLATFORM_WIDTHS[DEFAULT_PLATFORM]).toBe(1600);
   });
 
   it("none has width 0 (no resize)", () => {

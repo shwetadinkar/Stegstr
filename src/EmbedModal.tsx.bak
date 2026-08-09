@@ -8,15 +8,14 @@ import type { ProfileData } from "./types";
 export type StegoMethod = "qim" | "dot";
 
 const PLATFORM_LABELS: Record<string, string> = {
-  universal: "Universal — 1440x1440 square (recommended)",
-  whatsapp_standard: "WhatsApp (1600px)",
-  whatsapp_hd: "WhatsApp HD (1600px)",
-  telegram_photo: "Telegram (1600px)",
-  instagram: "Instagram (1440x1440 square)",
+  instagram: "Instagram (1080px)",
   facebook: "Facebook (2048px)",
   twitter: "Twitter/X (1600px)",
+  whatsapp_standard: "WhatsApp Standard (1600px)",
+  whatsapp_hd: "WhatsApp HD (4096px)",
+  telegram_photo: "Telegram (1920px)",
   imessage: "iMessage (1280px)",
-  none: "No resize (lossless channels only)",
+  none: "No resize (original size)",
 };
 
 export interface EmbedModalProps {
@@ -212,7 +211,7 @@ export function EmbedModal({
                   ))}
                 </select>
                 <p className="muted" style={{ fontSize: "0.8rem", marginTop: "0.25rem" }}>
-                  Pre-resizes to the platform's measured output geometry so the platform does not resample it. Resampling shifts the 8x8 DCT grid and destroys the payload. Universal (1440x1440 square) is safe on WhatsApp, Telegram and Instagram alike.
+                  Pre-resizes to match platform max width. Default (Instagram/1080px) works on all platforms.
                 </p>
               </div>
             )}
