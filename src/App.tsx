@@ -4,6 +4,9 @@ import { isWeb, pickImageFile, decodeStegoFile, encodeStegoToBlob, downloadBlob 
 import { getDotCapacityForFile } from "./stego-dot-web";
 import { getTauri } from "./platform-desktop";
 import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls } from "./net-adapter";
+import { profileFor } from "./stego-adaptive";
+import DetectResultModal, { type DetectedEvent } from "./DetectResultModal";
+import { verifyEvent, packForCapacity } from "./sync-engine";
 import { uint8ArrayToBase64 } from "./utils";
 import {
   decodeQimImageFile,
@@ -12,7 +15,6 @@ import {
   qimSelfTest,
   getQimCapacityForFile,
 } from "./stego-qim";
-import { profileFor } from "./stego-adaptive";
 import { uploadMedia } from "./upload";
 import { ensureStegstrSuffix } from "./constants";
 import * as stegoCrypto from "./stego-crypto";
@@ -301,6 +303,12 @@ function App({ profile }: { profile: string | null }) {
   const [embedding, setEmbedding] = useState(false);
   const [stegoProgress, setStegoProgress] = useState("");
   const [stegoLogs, setStegoLogs] = useState<string[]>([]);
+  // Decoded-image review. Events are held here rather than merged on open: an
+  // image can arrive from anyone via WhatsApp or a group chat, so opening one
+  // must not silently write to the user's feed.
+  const [detectReview, setDetectReview] = useState<{
+    events: DetectedEvent[]; bytes: number; name: string;
+  } | null>(null);
   const [dragOverStego, setDragOverStego] = useState(false);
   const [queuedZaps, setQueuedZaps] = useState<QueuedZap[]>(() => loadQueuedZaps(profile));
   const relayRef = useRef<ReturnType<typeof connectRelays> | null>(null);
@@ -1201,11 +1209,22 @@ function App({ profile }: { profile: string | null }) {
           kind: typeof e.kind === "number" ? e.kind : parseInt(String(e.kind), 10) || 1,
           created_at: typeof e.created_at === "number" ? e.created_at : Math.floor(Date.now() / 1000),
         }));
-        setEvents((prev) => {
-          const byId = new Map(prev.map((e) => [e.id, e]));
-          normalized.forEach((e) => byId.set(e.id, e));
-          return Array.from(byId.values()).sort((a, b) => b.created_at - a.created_at);
-        });
+        // Classify before showing anything: signature validity, whether the
+        // author is followed, and whether it is already held locally. The
+        // previous code merged everything unconditionally and reported only a
+        // count, so the user never saw what an image actually contained.
+        const knownIds = new Set(events.map((ev) => ev.id));
+        const classified: DetectedEvent[] = normalized.map((ev) => ({
+          ...ev,
+          verified: verifyEvent(ev as never),
+          followed: contactsSet.has(ev.pubkey),
+          duplicate: knownIds.has(ev.id),
+        }));
+        const badCount = classified.filter((ev) => !ev.verified).length;
+        if (badCount > 0) {
+          addStegoLog(`WARNING: ${badCount} event(s) failed signature verification; withheld`);
+        }
+        setDetectReview({ events: classified, bytes: 0, name: file.name });
         const profileUpdates: Record<string, ProfileData> = {};
         bundle.events.filter((e) => e.kind === 0).forEach((e) => {
           try {
@@ -1532,35 +1551,84 @@ function App({ profile }: { profile: string | null }) {
           }
           return { version: STEGSTR_BUNDLE_VERSION, events: [...synthetic, ...eventList] } as NostrStateBundle;
         };
-        // Helper: encrypt and fit payload to capacity, trimming events if needed
-        const encryptAndFit = async (maxPayloadBytes: number) => {
-          let trimmedEvents = [...events];
-          let encrypted: Uint8Array | null = null;
-          while (true) {
-            const bundle = await buildBundle(trimmedEvents);
-            const jsonString = JSON.stringify(bundle);
-            addStegoLog(`Bundle: ${trimmedEvents.length} events, ${jsonString.length} bytes JSON`);
-            if (embedRecipientMode === "recipients" && embedRecipients.length > 0 && effectivePrivKey) {
-              const selfPk = Nostr.getPublicKey(Nostr.hexToBytes(effectivePrivKey));
-              const allRecipients = Array.from(new Set([selfPk, ...embedRecipients]));
-              addStegoLog(`Encrypting for ${allRecipients.length} recipient(s)...`);
-              encrypted = await stegoCrypto.encryptForRecipients(jsonString, effectivePrivKey, allRecipients);
-            } else {
-              addStegoLog("Encrypting for any Stegstr user...");
-              encrypted = await stegoCrypto.encryptOpen(jsonString);
-            }
-            if (!maxPayloadBytes || encrypted.length <= maxPayloadBytes) break;
-            if (trimmedEvents.length === 0) break;
-            trimmedEvents = trimmedEvents.slice(0, -1);
+        // Helper: choose which events to carry, then encrypt to fit capacity.
+        //
+        // This previously took the whole event list, encrypted it, and on
+        // overflow dropped the LAST event and re-encrypted -- looping one event
+        // at a time. Two problems: "last in the array" is an arbitrary
+        // selection rule, and a 500-event feed that fits 50 ran ~450 full
+        // encryption passes.
+        //
+        // Now selection happens first, by usefulness per byte (own notes,
+        // followed authors, profiles and relay lists weighted up; recency
+        // decaying; replies whose parent did not fit are dropped so threads
+        // stay readable). Any residual overflow is closed by binary search, so
+        // the worst case is log n encryptions rather than n.
+        const encryptEvents = async (list: NostrEvent[]) => {
+          const bundle = await buildBundle(list);
+          const jsonString = JSON.stringify(bundle);
+          if (embedRecipientMode === "recipients" && embedRecipients.length > 0 && effectivePrivKey) {
+            const selfPk = Nostr.getPublicKey(Nostr.hexToBytes(effectivePrivKey));
+            const allRecipients = Array.from(new Set([selfPk, ...embedRecipients]));
+            return stegoCrypto.encryptForRecipients(jsonString, effectivePrivKey, allRecipients);
           }
-          if (!encrypted || (maxPayloadBytes && encrypted.length > maxPayloadBytes)) {
+          return stegoCrypto.encryptOpen(jsonString);
+        };
+
+        const encryptAndFit = async (maxPayloadBytes: number) => {
+          if (!maxPayloadBytes) {
+            const enc = await encryptEvents(events);
+            addStegoLog(`Encrypted: ${enc.length} bytes (${events.length} events, no cap)`);
+            return enc;
+          }
+
+          // Budget is on the ENCRYPTED payload; packForCapacity estimates from
+          // compressed JSON, so leave headroom for the encryption envelope.
+          const packed = packForCapacity(events, {
+            budget: Math.floor(maxPayloadBytes * 0.9),
+            self: effectivePrivKey
+              ? Nostr.getPublicKey(Nostr.hexToBytes(effectivePrivKey))
+              : undefined,
+            follows: contactsSet,
+          });
+          addStegoLog(
+            `Selected ${packed.events.length}/${events.length} events by priority` +
+            (packed.droppedOrphans ? `, dropped ${packed.droppedOrphans} orphan replies` : "") +
+            ` (~${packed.estimatedBytes}B est, ${maxPayloadBytes}B budget)`,
+          );
+
+          let best: Uint8Array | null = null;
+          let bestCount = 0;
+          let lo = 0;
+          let hi = packed.events.length;
+          const attempt = async (n: number) => {
+            const enc = await encryptEvents(packed.events.slice(0, n));
+            addStegoLog(`  try ${n} events -> ${enc.length}B ${enc.length <= maxPayloadBytes ? "fits" : "over"}`);
+            return enc;
+          };
+
+          const full = await attempt(hi);
+          if (full.length <= maxPayloadBytes) {
+            best = full;
+            bestCount = hi;
+          } else {
+            while (lo < hi) {
+              const mid = Math.floor((lo + hi + 1) / 2);
+              const enc = await attempt(mid);
+              if (enc.length <= maxPayloadBytes) { best = enc; bestCount = mid; lo = mid; }
+              else { hi = mid - 1; }
+            }
+          }
+
+          if (!best) {
+            addStegoLog("Nothing fits: cover image is too small for even one event");
             return null;
           }
-          if (trimmedEvents.length < events.length) {
-            addStegoLog(`Trimmed events: kept ${trimmedEvents.length}/${events.length} to fit capacity`);
+          if (bestCount < events.length) {
+            addStegoLog(`Carrying ${bestCount}/${events.length} events (${best.length}B of ${maxPayloadBytes}B)`);
           }
-          addStegoLog(`Encrypted: ${encrypted.length} bytes`);
-          return encrypted;
+          addStegoLog(`Encrypted: ${best.length} bytes`);
+          return best;
         };
 
         if (embedMethod === "qim") {
@@ -1576,7 +1644,10 @@ function App({ profile }: { profile: string | null }) {
             resizedCover = await resizeCoverForPlatform(
               embedCoverFile, platformWidth, platformProfile.square,
             );
-            addStegoLog(`Resized cover: ${resizedCover.name} (${resizedCover.size} bytes)`);
+            addStegoLog(
+              `Resized cover: ${resizedCover.name} (${resizedCover.size} bytes)` +
+              (platformProfile.square ? " [square: platform normalises to 1:1]" : ""),
+            );
           } catch (e) {
             setDecodeError(`Resize failed: ${e instanceof Error ? e.message : String(e)}`);
             setEmbedding(false);
@@ -2676,6 +2747,85 @@ function App({ profile }: { profile: string | null }) {
         />
       )}
 
+      {/*
+        Progress overlay.
+
+        The stego panel already renders a progress bar, but it lives in a
+        right-hand aside that is out of eyeline (and off-screen on narrow
+        windows) while the user is looking at the image area. Embedding a large
+        feed into a large cover runs for many seconds -- encrypt, fit, DCT,
+        re-encode -- with no visible sign of life, which reads as a hang.
+
+        This is a fixed overlay so the state is visible wherever the user is
+        looking. It shows the last log line as well as the phase, because
+        "Encrypting..." for eight seconds is far less reassuring than watching
+        the fit search count down.
+      */}
+      {(detecting || embedding) && (
+        <div
+          style={{
+            position: "fixed", left: "50%", bottom: "1.5rem",
+            transform: "translateX(-50%)", zIndex: 1200,
+            background: "#1c1c1c", color: "#fff", borderRadius: 8,
+            padding: "0.7rem 1rem", minWidth: 300, maxWidth: "90vw",
+            boxShadow: "0 4px 20px rgba(0,0,0,0.28)", fontSize: "0.85rem",
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <span
+              style={{
+                width: 12, height: 12, borderRadius: "50%",
+                border: "2px solid rgba(255,255,255,0.35)",
+                borderTopColor: "#fff", display: "inline-block",
+                animation: "stegspin 0.8s linear infinite", flexShrink: 0,
+              }}
+            />
+            <strong style={{ fontWeight: 600 }}>
+              {detecting ? "Reading image" : "Building image"}
+            </strong>
+            <span style={{ opacity: 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {stegoProgress}
+            </span>
+          </div>
+          {stegoLogs.length > 0 && (
+            <div
+              style={{
+                marginTop: "0.4rem", opacity: 0.6, fontSize: "0.75rem",
+                fontFamily: "monospace", overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              {stegoLogs[stegoLogs.length - 1]}
+            </div>
+          )}
+          <style>{"@keyframes stegspin{to{transform:rotate(360deg)}}"}</style>
+        </div>
+      )}
+
+      {detectReview && (
+        <DetectResultModal
+          events={detectReview.events}
+          imageName={detectReview.name}
+          nameFor={(pk) => profiles[pk]?.name}
+          onClose={() => {
+            addStegoLog("Discarded all content from this image");
+            setDetectReview(null);
+          }}
+          onAccept={(ids) => {
+            const chosen = new Set(ids);
+            const accepted = detectReview.events.filter((e) => chosen.has(e.id));
+            setEvents((prev) => {
+              const byId = new Map(prev.map((e) => [e.id, e]));
+              accepted.forEach((e) => byId.set(e.id, e as NostrEvent));
+              return Array.from(byId.values()).sort((a, b) => b.created_at - a.created_at);
+            });
+            addStegoLog(`Added ${accepted.length} item(s) to feed`);
+            setDetectReview(null);
+          }}
+        />
+      )}
       {embedModalOpen && (
         <EmbedModal
           onClose={() => setEmbedModalOpen(false)}
