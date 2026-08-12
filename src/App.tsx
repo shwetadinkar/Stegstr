@@ -1771,9 +1771,15 @@ function App({ profile }: { profile: string | null }) {
           const tryEncode = (n: number) =>
             encodeAndVerify(fittedEvents.slice(0, n), `${n} event${n === 1 ? "" : "s"}`);
 
-          if (fittedEvents.length === 0) {
+          // Only a genuinely empty candidate pool means "you have nothing to
+          // embed". An empty packed selection means something quite different
+          // -- your content did not FIT -- and reporting that as "post a note
+          // first" while a note sits on screen is simply wrong. It became easy
+          // to hit once §13.5 cut the capacity estimate ~4x: notes that used
+          // to be packed no longer are.
+          if (embedCandidates.length === 0) {
             setDecodeError("There is nothing to embed yet — post a note or follow someone first.");
-            addStegoLog("Embed cancelled: no events selected to carry.");
+            addStegoLog("Embed cancelled: no events to carry.");
             setEmbedding(false);
             setStegoProgress("");
             return;
@@ -1785,19 +1791,29 @@ function App({ profile }: { profile: string | null }) {
           // so including 0 in the search made "shrink until it survives"
           // silently succeed with an image carrying nothing -- it decoded
           // cleanly and reported "0 new items". An image with no content is a
-          // failure, not a smaller success.
+          // failure, not a smaller success. Same reason the whole-event search
+          // is skipped entirely when nothing was packed: tryEncode(0) would
+          // "succeed" and ship an empty image.
           let best: EncodeAttempt | null = null;
-          const fullAttempt = await tryEncode(fittedEvents.length);
-          if (fullAttempt.ok) {
-            best = fullAttempt;
-          } else if (fittedEvents.length > 1) {
-            addStegoLog("Full selection did not survive self-test; searching for the largest count that does...");
-            let lo = 1, hi = fittedEvents.length - 1;
-            while (lo <= hi) {
-              const mid = Math.floor((lo + hi) / 2);
-              const attempt = await tryEncode(mid);
-              if (attempt.ok) { best = attempt; lo = mid + 1; } else { hi = mid - 1; }
+          let lastError: string | undefined;
+          if (fittedEvents.length > 0) {
+            const fullAttempt = await tryEncode(fittedEvents.length);
+            lastError = fullAttempt.error;
+            if (fullAttempt.ok) {
+              best = fullAttempt;
+            } else if (fittedEvents.length > 1) {
+              addStegoLog("Full selection did not survive self-test; searching for the largest count that does...");
+              let lo = 1, hi = fittedEvents.length - 1;
+              while (lo <= hi) {
+                const mid = Math.floor((lo + hi) / 2);
+                const attempt = await tryEncode(mid);
+                if (attempt.ok) { best = attempt; lo = mid + 1; } else { hi = mid - 1; }
+              }
             }
+          } else {
+            addStegoLog(
+              `Nothing fit the ${maxPayloadBytes}B budget whole; trying a shortened copy of your latest note...`,
+            );
           }
 
           // Fallback: a single note too long for the cover. Rather than
@@ -1809,7 +1825,13 @@ function App({ profile }: { profile: string | null }) {
           // altered words under a different key would attribute text to them
           // they never wrote, so those are left whole and simply dropped.
           if (!best) {
-            const head = fittedEvents[0];
+            // When packing produced nothing at all, fall back to the newest of
+            // your own notes -- that is precisely the case this exists for: one
+            // note too long for the cover, which would otherwise report failure
+            // while sitting visible on screen.
+            const head = fittedEvents[0] ?? [...embedCandidates]
+              .filter((e) => e.kind === 1 && ourPubkeysSet.has(e.pubkey))
+              .sort((a, b) => b.created_at - a.created_at)[0];
             const ownIdentity = head && identities.find(
               (i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex)) === head.pubkey,
             );
@@ -1848,8 +1870,9 @@ function App({ profile }: { profile: string | null }) {
             // the platform step size.
             setDecodeError(
               `This cover image cannot reliably carry your feed at the ${targetPlatform} settings ` +
-              `(${fullAttempt.error}). Try a larger or more textured photo, a platform with a bigger ` +
-              `canvas, or the Dot method.`,
+              `(holds about ${maxPayloadBytes} bytes${lastError ? `; ${lastError}` : ""}). Try a larger or ` +
+              `more textured photo, a platform with a bigger canvas (Facebook 2048px, or Telegram sent ` +
+              `as a file), or the Dot method.`,
             );
             addStegoLog("Embed cancelled: nothing survives self-test on this cover.");
             setEmbedding(false);
