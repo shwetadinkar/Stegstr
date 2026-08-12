@@ -408,9 +408,22 @@ function App({ profile }: { profile: string | null }) {
   }, [identities.length, profile]);
 
   useEffect(() => {
+    if (identities.length === 0) return;
     try {
       localStorage.setItem(getStorageKey(BASE_IDENTITIES, profile), JSON.stringify(identities));
-    } catch (_) {}
+    } catch (e) {
+      // Every other persisted value can be dropped silently and rebuilt from
+      // the network. This one cannot: the private keys ARE the accounts. If
+      // this write fails -- storage full, storage disabled, some private
+      // browsing modes -- the user loses every identity the moment they
+      // refresh, with nothing on screen to suggest anything went wrong. Say
+      // so while they can still copy the key out.
+      logger.logError("Identity save failed", e, { count: identities.length });
+      setStatus(
+        "WARNING: your keys could not be saved to this browser's storage. " +
+        "Back up your nsec from the Identity tab before closing this tab, or you will lose this account.",
+      );
+    }
   }, [identities, profile]);
   useEffect(() => {
     if (actingPubkey) {

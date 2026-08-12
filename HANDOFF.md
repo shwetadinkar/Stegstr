@@ -1372,3 +1372,51 @@ would need adding.
    selection; a mixed feed whose last fitting event is over-long still drops
    it whole.
 4. Everything from §12.5 and §13.4 is unchanged and still open.
+
+### 14.6 Audit pass — two real bugs, one dead file
+
+A read-through of the whole program after the session work, looking for
+problems no test covers.
+
+**The codeword length prefix overflows on large covers.** `embedQim` writes
+the RS codeword length into a 2-byte big-endian prefix, so anything over
+65535 wraps and the decoder reads a nonsense length. Nothing could reach that
+while every profile resized to <=2048px -- but `telegram_file` (added this
+session) does not resize at all. Measured budgets:
+
+```
+  universal 1600      4498 B   ok
+  facebook 2048       7370 B   ok
+  12MP no-resize     29489 B   ok
+  48MP no-resize    112498 B   EXCEEDS the 2-byte prefix
+```
+
+48MP is an ordinary phone camera now. `getQimCapacityBytes` would have
+reported ~98 KB of capacity that the framing cannot address; the self-test
+would have caught the failure and the shrink loop walked down, so it would
+have presented as "mysteriously cannot use the stated capacity" rather than a
+corrupt image -- the same class of dishonest-number bug as §13.5. Capacity is
+now capped at what the prefix can express. Raising the real ceiling means
+widening the prefix, which is a format change and was not attempted.
+
+**Identity save failure was silent.** Every `localStorage.setItem` in the app
+is wrapped in `try {} catch (_) {}`, which is right for relay lists, mutes and
+read timestamps -- all rebuildable. It is wrong for one: the identities key
+holds the private keys, which ARE the accounts. Storage full, storage
+disabled, or some private browsing modes and the user loses every identity on
+the next refresh with nothing on screen suggesting anything happened. It now
+logs and warns, telling them to back up the nsec while they still can.
+
+**`usePersistedState.ts` is dead code** -- nothing imports it. It also has a
+latent bug if it were adopted: `serialize` sits in the `useEffect` dependency
+array, so an inline serializer would re-run the write every render. Left in
+place rather than deleted, but it should not be adopted as-is.
+
+**Checked and found clean:** `embedQim` guards oversized payloads and throws
+rather than truncating; embed/detect agree on `lumaAcCount`, `rsNsym`,
+`repeat` and chroma settings, resolved from the profile on both sides; every
+other `localStorage` write is guarded and safely rebuildable; no `useState`
+setter is declared without being called, and no state value is written
+without being read (the check that found §13.3).
+
+**186 tests passing**, `tsc --noEmit` clean, `npm run build` clean.

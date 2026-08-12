@@ -996,7 +996,14 @@ export function getQimCapacityBytes(
   const totalBitsAvailable = Math.floor(totalCoeffs / repeat);
   const totalBytesAvailable = Math.floor(totalBitsAvailable / 8);
 
-  const maxCodewordLen = totalBytesAvailable - 2; // 2-byte codeword length prefix
+  // The codeword length travels in a 2-byte big-endian prefix, so a codeword
+  // longer than 65535 wraps and the decoder reads a nonsense length. Nothing
+  // could reach that while every profile resized to <=2048px, but
+  // telegram_file does not resize at all: a 48MP phone photo yields a ~112 KB
+  // budget, and reporting that as capacity would promise space the framing
+  // cannot address. Capped here so the estimate stays honest; raising the real
+  // ceiling would mean widening the prefix, which is a format change.
+  const maxCodewordLen = Math.min(totalBytesAvailable - 2, 0xffff);
   const maxRaw = maxRawForCodewordBudget(maxCodewordLen, rsNsym);
   return Math.max(0, maxRaw - MAGIC_LEN - LENGTH_BYTES);
 }
