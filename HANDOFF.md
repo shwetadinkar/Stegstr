@@ -819,7 +819,7 @@ author-unscoped subscription (`{kinds:[1,6],limit:100}` +
 assumption that a filter includes `authors`, so this required no changes
 there.
 
-### 12.3 Current status
+### 12.3 Current status (superseded by §12.4 below)
 
 **179 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
 
@@ -832,3 +832,95 @@ there.
 3. Everything from §11.4 (luma-delta re-bracketing once chroma is proven,
    Telegram app confirmation, release workflow, README, NIP-44, Rust
    encoder, MCP server, audio) is unchanged and still open.
+
+---
+
+## 12.4 Fifth addendum — the scalar chroma fix wasn't enough on a real photo
+
+§12.1's scalar-per-block redesign was verified only against a synthetic
+sine-wave test cover. The first real-app test, on an actual photo, failed
+immediately (`No QIM payload found`) and surfaced three more real problems,
+found in this order:
+
+**RS parity overhead was consuming most of chroma's tiny capacity.**
+`rsNsym` defaults to 128, but RS parity is a *per-chunk* cost -- a small
+~60-byte payload's single chunk still pays 128 bytes of parity, more than
+doubling it. Against chroma's ~8100-block-per-channel capacity, that alone
+saturated ~99% of the whole cb channel. Chroma-enabled profiles now carry
+`rsNsym: 32` (PlatformProfile gained an `rsNsym?` field, resolved through
+`encodeQimImageFile`/`getQimCapacityForFile`/`decodeQimImageFile` the same
+way `chromaDelta` already was).
+
+**Flat-fill destroyed natural chroma texture.** The scalar value was written
+as a uniform flat 16x16 patch -- correct for surviving the encoder's
+subsampling, but on a real photo (rich local colour detail, unlike a
+synthetic sine pattern) this reads as an obvious mosaic of flat-coloured
+swatches replacing real texture. Confirmed by eye: every touched block a
+visibly different, vivid colour cast, in exactly the pattern the contest
+holder's screenshot showed. Fixed by writing a uniform *additive shift*
+instead of a flat overwrite (`shiftChromaSuperblock`, was
+`writeChromaSuperblockScalar`): every 2x2 group's average still shifts by
+exactly the same amount regardless of the encoder's filter (same
+subsampling-invariance property), but the block's own natural variation is
+preserved, so what survives is a subtle colour cast over real detail rather
+than a flat swatch. Real-photo result: from a vivid wall-to-wall checkerboard
+to a much fainter tint, concentrated on the flattest part of the image (the
+ceiling) -- residual visibility on flat regions is the same phenomenon
+§10.6 already documented for luma (flat covers have no texture to mask
+perturbation in) and is not fully resolved.
+
+**A fixed erasure-margin constant silently stopped working at delta=28.**
+`QIM_ERASURE_MARGIN` was `QIM_DELTA / 6` using the module's *default*
+QIM_DELTA=14, not whatever delta was actually in use -- so at chromaDelta=28
+the threshold was half of what it should have been, missing real corruption
+entirely (0 bytes ever flagged as erasures on the failing real-photo test).
+Replaced with a per-bit-position threshold derived from whichever delta
+actually produced that bit (`bitDelta`/`groupedDelta`, threaded through
+detection), so RS gets accurate erasure hints regardless of which channel or
+delta a byte's bits came from. This almost certainly also affects luma at
+non-default deltas (28 is the default lossy-profile delta), though luma
+hasn't shown a problem in real-platform testing.
+
+**Repeat-copies of one logical bit landed in spatially adjacent blocks, so a
+locally bad region defeated majority voting.** `buildChromaBlockStream`
+visits blocks in simple row-major order, and `repeatBits` duplicates each
+logical bit `repeat` times consecutively -- so all 5 copies of a bit land in
+5 nearby blocks. Measured on the real photo: errors concentrated in the
+ceiling (rows 0-16 of 90), not spread evenly, so a bit whose 5 copies all
+fell in that region could fail regardless of redundancy. Fixed with a
+standard block interleaver (`interleavedPhysicalIndex`): spreads the 5
+copies across five widely-separated bands of the full chroma capacity,
+computed identically by encoder and decoder from capacity and repeat alone
+(no shared state needed). Scoped to chroma only -- luma's existing AC-major
+ordering already spreads a single AC position across the whole image before
+advancing and is validated working on real platforms (§10.1); changing it
+risked regressing something with no measured problem to justify touching it.
+
+**Verified end-to-end against the actual real photo** (not the synthetic
+cover): embed -> real JPEG encode -> decode now round-trips exactly, using
+the profile-driven `encodeQimImageFile`/`detectQim` path with no manual
+parameter overrides.
+
+**Honest remaining gap**: `stego-chroma.test.ts` still only uses a synthetic
+sine-wave cover. That cover did not reproduce any of the three real-photo
+bugs above -- real-photo testing is what found all of them. The test suite
+does not yet guard against this class of regression; it currently relies on
+manually re-running against a real photo. A synthetic cover with a large,
+JPEG-artifact-heavy flat region might catch the texture/erasure issues, but
+this was not attempted -- noted here rather than left silent.
+
+### 12.5 Current status
+
+**180 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+1. **Real-phone bracket testing on Instagram** -- still the priority, now
+   testing a design that has survived a real photo locally, which none of
+   the previous versions had.
+2. Consider whether the erasure-margin fix should also change luma's
+   behaviour at non-28 deltas -- untested, though luma has no known problem.
+3. Consider adding a synthetic-cover regression test for the
+   texture/erasure class of bug, so future changes don't need a real photo
+   to catch a regression here.
+4. Everything from §11.4/§12.3 (luma-delta re-bracketing, Telegram app
+   confirmation, release workflow, README, NIP-44, Rust encoder, MCP server,
+   audio) is unchanged and still open.
