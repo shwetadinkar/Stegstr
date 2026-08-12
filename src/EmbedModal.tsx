@@ -13,7 +13,7 @@ export type StegoMethod = "qim" | "dot";
 // that to its 1440 canvas, destroying the payload) and WhatsApp HD 4096px
 // (downscaled to 1600, same result).
 const PLATFORM_LABELS: Record<string, string> = {
-  whatsapp_standard: "WhatsApp (1600px)",
+  whatsapp_standard: "WhatsApp (1600px, HD included)",
   whatsapp_hd: "WhatsApp HD (1600px)",
   telegram_photo: "Telegram (1600px)",
   instagram: "Instagram (1440 square)",

@@ -104,11 +104,15 @@ export interface PlatformProfile {
 export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   whatsapp_standard: {
     width: 1600, square: false, delta: 28,
-    note: "Caps at 1600px. Measured 0.15-0.38% BER, up to 32KB payload.",
+    note: "Caps at 1600px, HD sends included. Measured 0.15-0.38% BER, up to 32KB payload.",
   },
+  // Kept as an alias so any stored reference still resolves, but not offered
+  // separately: HD sends were measured to cap at the same 1600px and take the
+  // same step, so two identical entries in the picker only invited the
+  // question of which one to pick.
   whatsapp_hd: {
     width: 1600, square: false, delta: 28,
-    note: "HD upload still safe at 1600px.",
+    note: "Alias of whatsapp_standard -- HD uploads cap at the same 1600px.",
   },
   telegram_photo: {
     width: 1600, square: false, delta: 28,
@@ -250,7 +254,6 @@ export const DEFAULT_PLATFORM = "whatsapp_standard";
 export const USER_PLATFORMS: readonly string[] = [
   "universal",
   "whatsapp_standard",
-  "whatsapp_hd",
   "telegram_photo",
   "instagram",
   "facebook",
