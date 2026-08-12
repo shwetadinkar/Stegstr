@@ -8,13 +8,14 @@ it("universal profile: capacity, embed, self-test, decode", async () => {
   const { profileFor } = await import("../stego-adaptive");
   console.log("universal profile:", JSON.stringify(profileFor("universal")));
 
-  // A 4:3 source, as most phone photos are -- universal must centre-crop it.
+  // A 4:3 source, as most phone photos are. Universal no longer crops: it
+  // dropped Instagram's square canvas, so aspect ratio is preserved.
   const cover = new File([makeCoverJpeg(2400, 1800, 11)], "c.jpg", { type: "image/jpeg" });
 
   const cap = await getQimCapacityForFile(cover, "universal");
   console.log("capacity:", JSON.stringify(cap));
-  expect(cap.width).toBe(1440);
-  expect(cap.height).toBe(1440);
+  expect(cap.width).toBe(1600);
+  expect(cap.height).toBe(1200);
 
   const payload = new Uint8Array(1242).map((_, i) => (i * 31 + 7) & 0xff);
   const blob = await encodeQimImageFile(cover, payload, { platform: "universal" });

@@ -228,10 +228,38 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
    * because Instagram is the harshest of the three -- a step that survives it
    * survives the others with room to spare.
    */
+  /**
+   * Deliberately ignores Instagram.
+   *
+   * Instagram is the only platform that forces a 1440 square canvas and the
+   * only one that sharpens, which is why it needs step 56 where every other
+   * measured platform survives at 28. Carrying Instagram's requirements here
+   * made every WhatsApp and Telegram user pay twice the perturbation -- the
+   * exact cost this project is judged on -- to satisfy a platform they were
+   * not sending to, and which offers no native way to download the image
+   * back anyway. Instagram is now a deliberate side target: pick its own
+   * profile when you actually want it.
+   */
   universal: {
-    width: 1440, square: true, delta: 56, lumaAcCount: 6, rsNsym: 32,
-    note: "Square 1440 at Instagram's step size, lowest 6 AC positions. Survives WhatsApp, Telegram and Instagram. "
-      + "Carries less than the old full-band setting claimed to, but delivers what it reports.",
+    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    note: "1600px, step 28. Survives WhatsApp, Telegram, Twitter and Facebook at half Instagram's "
+      + "perturbation. Not for Instagram, which needs a 1440 square canvas and step 56.",
+  },
+  /**
+   * The maximum-capacity channel. Telegram's "send as file" does not
+   * recompress at all, so the only damage a payload takes is this app's own
+   * JPEG encode -- no platform resize, no second quantisation. That means the
+   * cover keeps its full resolution, and capacity scales with it: tens of KB
+   * on a phone photo, against ~2-4 KB for every resized channel.
+   *
+   * Must be sent as a FILE, not as a photo. Sending it as a photo puts it
+   * through Telegram's normal 1600px path and the payload is destroyed;
+   * telegram_photo is the profile for that.
+   */
+  telegram_file: {
+    width: 0, square: false, delta: 20, lumaAcCount: 6, rsNsym: 32,
+    note: "No resize, step 20. Telegram 'send as file' is lossless, so this carries far more than any "
+      + "other channel -- tens of KB on a full-size photo. Large covers take noticeably longer to embed.",
   },
   none: {
     width: 0, square: false, delta: 20,
@@ -255,6 +283,7 @@ export const USER_PLATFORMS: readonly string[] = [
   "universal",
   "whatsapp_standard",
   "telegram_photo",
+  "telegram_file",
   "instagram",
   "facebook",
   "twitter",

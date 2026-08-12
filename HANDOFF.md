@@ -1229,3 +1229,146 @@ done with it", and reusing one for the other has broken a different feature
 each time.
 
 **185 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+## 14. Session summary — bug hunting, and Instagram demoted
+
+This session had two halves. The planned steganography work (§10.4 option 2,
+zigzag restriction) took a few hours; the rest went on the contest holder's
+actual instruction -- *"thoroughly test and use the app to find bugs and fix
+them"* -- which produced fourteen real bugs, three of them mine, found by a
+human using the app rather than by any test.
+
+### 14.1 The single most important finding
+
+**The reported capacity was ~2.4x what the encoder could deliver.** Measured
+on one real photo, same cover and geometry and delta, only the AC band
+differing:
+
+```
+  24 AC positions   reported 9641 B   PASS at 1930 B   FAIL at 4000 B
+   6 AC positions   reported 4226 B   PASS at 1930 B   PASS at 4000 B
+```
+
+The capacity formula counted every embedding slot as usable -- true of the DCT
+grid, false of the channel, because high-frequency AC positions do not survive
+a quality-75 re-encode. Bits placed there were counted and then lost. Capacity
+now estimates over the reliable band only (`RELIABLE_LUMA_AC = 6`).
+
+Nearly every confusing symptom this session traced back to this one number:
+"capacity says 9 KB but only 170 characters fit", self-tests failing on
+payloads well under the stated limit, the shrink loop walking down to nothing.
+The encoder was refusing to lie; the estimate was.
+
+**It also reversed a conclusion.** §13.1 recorded zigzag restriction as
+showing no improvement, based on a visual comparison. That was answering the
+wrong question: the hypothesis was about *survival*, and on survival the
+restriction wins clearly. It is now the default for Instagram rather than an
+experiment.
+
+### 14.2 Instagram demoted to a side target (decided this session)
+
+Instagram is the only platform that forces a 1440 square canvas and the only
+one that sharpens, which is why it needs step 56 where every other measured
+platform survives at 28 -- twice the perturbation, and perturbation is the
+criterion this project is judged on. Every hard problem this session (visible
+crosshatch, chroma tinting, the zigzag work, capacity collapsing) traces back
+to Instagram alone.
+
+The user then raised the point that settles it: **Instagram has no native way
+to download the image back.** A steganographic channel needs the file byte for
+byte, and a screenshot is a re-render that fails regardless of how robust the
+payload is. Even a perfect encoder leaves the receiver with no way to get the
+carrier out.
+
+So:
+
+| Profile | Geometry | Step | Role |
+|---|---|---|---|
+| `universal` | 1600, aspect kept | 28 | Main target: WhatsApp, Telegram, Twitter, Facebook |
+| `telegram_file` | no resize | 20 | Maximum capacity -- lossless, tens of KB |
+| `instagram` | 1440 square | 56 | Side target, best effort |
+
+`universal` previously carried Instagram's square canvas and step 56, which
+charged every WhatsApp and Telegram user twice the perturbation for a platform
+they were not sending to. It no longer does.
+
+`telegram_file` is new: Telegram's "send as file" does not recompress, so the
+cover keeps full resolution and the only damage is this app's own encode.
+Capacity scales with the cover -- roughly 25 KB on a 4096x3072 photo against
+~2-4 KB for every resized channel. Must be sent as a *file*; sending it as a
+photo puts it through the 1600px path and destroys the payload.
+
+### 14.3 The recurring bug class
+
+Three separate bugs, and one regression, all the same shape: **state that
+records "where did this come from" is not state that records "what does the
+user want done with it".**
+
+- `importedEventIds` was declared and read but never written, so a decoded own
+  note could never appear (§13.3).
+- The Following tab tested `contactsSet` only -- you do not follow yourself,
+  so your own imported note was filtered out (§13.5).
+- Deleting a note left it permanently unrecoverable from an image (§13.7),
+  and the fix for *that* read `importedEventIds` -- which is populated with
+  every event of every decoded image -- as "explicitly restored", making every
+  such note permanently undeletable (§13.8).
+
+All three presented identically as "Add to my feed does nothing", because
+`Added N item(s) to feed` reports the *merge*, which always succeeds, not the
+*display*, where every one of them lived. That log line now prints a reason
+per item.
+
+Worth re-running after any state refactor: a two-line shell loop over every
+`useState` in every `.tsx`, checking for setters never called and values never
+read. It found the first of these.
+
+### 14.4 State at end of session
+
+**186 tests passing**, `tsc --noEmit` clean, `npm run build` clean. All work
+committed and pushed to `calibration`.
+
+Honest caveat, unchanged and now the whole story: **nothing here has been
+through a real platform.** Every measurement above is this encoder reading its
+own output. The profiles were restructured on the strength of local
+measurement plus a product argument, which is sound reasoning but is not the
+same as evidence.
+
+### 14.5 Next session — start here
+
+**Round 1: do the defaults survive? (4 uploads.)** Same cover photo, same
+short note (~500 B) each time, so payload size is not a confound.
+
+| # | Profile | Send via | Tests |
+|---|---|---|---|
+| 1 | `universal` | WhatsApp, normal | The new main target |
+| 2 | `universal` | WhatsApp, **HD** | Whether merging the two entries was right |
+| 3 | `universal` | Telegram, **as photo** | Second platform |
+| 4 | `telegram_file` | Telegram, **as file** | The max-capacity claim |
+
+Pass = download the image back *from the platform* and decode it in Stegstr.
+Never screenshot: a screenshot is a re-render and fails 100% of the time.
+
+**Round 2, where Round 1 passed:** repeat at ~2 KB and ~3 KB to find the real
+ceiling, which will be lower than the local one. For `telegram_file` go much
+higher -- 10 KB, 25 KB -- since that is its purpose.
+
+**Round 3, only if there is time:** `instagram` at step 56, feed post not
+Story. If it passes, walk down the hidden bracket ladder (tick "Show
+experimental test profiles"): `zz6 step 40`, `28`, `20`, stopping at the
+lowest that survives. If it fails, there is no zz6 profile above 56 -- one
+would need adding.
+
+**Then, still open:**
+
+1. The pointer tier (§10.4) -- embed a nostr event id plus a NIP-44 key,
+   ~300 B, and fetch the content from a relay. Makes message size unlimited
+   and the image far more invisible, at the cost of the offline property: the
+   image stops being self-contained and the fetch is observable. Discussed
+   this session, deliberately not built. `upload.ts` already posts to
+   nostr.build if it is wanted.
+2. `RELIABLE_LUMA_AC = 6` comes from one photo. 6 is where the bracket ladder
+   happened to sit, not a value anything searched for.
+3. Truncation only fires for a single over-long note at the head of the
+   selection; a mixed feed whose last fitting event is over-long still drops
+   it whole.
+4. Everything from §12.5 and §13.4 is unchanged and still open.

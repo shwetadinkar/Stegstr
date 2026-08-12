@@ -231,7 +231,7 @@ function App({ profile }: { profile: string | null }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
   const [embedMethod, setEmbedMethod] = useState<StegoMethod>("qim");
-  const [targetPlatform, setTargetPlatform] = useState<string>("instagram");
+  const [targetPlatform, setTargetPlatform] = useState<string>("universal");
   const [embedCoverFile, setEmbedCoverFile] = useState<File | null>(null);
   const [embedRecipientMode, setEmbedRecipientMode] = useState<"open" | "recipients">("open");
   const [embedRecipientInput, setEmbedRecipientInput] = useState("");

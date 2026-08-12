@@ -43,7 +43,10 @@ describe("measured platform profiles", () => {
     // positions changes this threshold -- that's an open, real-device
     // question, not something this test can assert an answer to yet.
     for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
-      if (name === "none") continue;   // lossless channel, no recompression
+      // Lossless channels: nothing recompresses the image after this app's
+      // own encode, so the threshold measured against recompression does not
+      // apply to them.
+      if (p.width === 0) continue;
       // Only the hidden bracket profiles are exempt. instagram and universal
       // now carry lumaAcCount too (§13.5 made the restriction the default),
       // and they must still clear the threshold like any other real target.
@@ -79,11 +82,26 @@ describe("measured platform profiles", () => {
     expect(profileFor("myspace")).toEqual(PLATFORM_PROFILES[DEFAULT_PLATFORM]);
   });
 
-  it("universal profile survives every measured platform", () => {
+  it("universal fits every non-Instagram platform it claims, and skips Instagram", () => {
+    // Universal deliberately excludes Instagram: matching Instagram means a
+    // 1440 square canvas and step 56, and carrying that here charged every
+    // WhatsApp and Telegram user twice the perturbation for a platform they
+    // were not sending to. It must still fit under the caps it does claim.
     const u = PLATFORM_PROFILES.universal;
-    expect(u.width).toBe(1440);
-    expect(u.width).toBeLessThanOrEqual(PLATFORM_PROFILES.whatsapp_standard.width);
-    expect(u.square).toBe(true);
+    for (const name of ["whatsapp_standard", "telegram_photo", "twitter", "facebook"]) {
+      expect(u.width).toBeLessThanOrEqual(PLATFORM_PROFILES[name].width);
+    }
+    expect(u.square).toBe(false);
+    expect(u.delta).toBeLessThan(PLATFORM_PROFILES.instagram.delta);
+  });
+
+  it("telegram_file is the lossless maximum-capacity channel", () => {
+    // width 0 means no resize, so capacity scales with the cover instead of
+    // being capped by a platform's geometry -- the whole point of the profile.
+    const t = PLATFORM_PROFILES.telegram_file;
+    expect(t.width).toBe(0);
+    expect(t.square).toBe(false);
+    expect(t.delta).toBeLessThan(PLATFORM_PROFILES.telegram_photo.delta);
   });
 });
 
