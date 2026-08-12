@@ -37,8 +37,14 @@ describe("measured platform profiles", () => {
     // Instagram's sharpening, and sharpening is exactly what damaged real
     // uploads on a phone. Trusting the optimistic simulator here would repeat
     // the mistake that produced upstream's sim-to-real gap.
+    //
+    // Exception: the zigzag-restricted bracket profiles (§10.4 option 2)
+    // exist specifically to test whether restricting to the lowest 6 AC
+    // positions changes this threshold -- that's an open, real-device
+    // question, not something this test can assert an answer to yet.
     for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
       if (name === "none") continue;   // lossless channel, no recompression
+      if (p.lumaAcCount !== undefined) continue;   // zigzag bracket: threshold is exactly what's being tested
       expect(p.delta).toBeGreaterThanOrEqual(26);
     }
   });

@@ -924,3 +924,145 @@ this was not attempted -- noted here rather than left silent.
 4. Everything from §11.4/§12.3 (luma-delta re-bracketing, Telegram app
    confirmation, release workflow, README, NIP-44, Rust encoder, MCP server,
    audio) is unchanged and still open.
+
+## 13. Sixth addendum — zigzag restriction, and a session spent finding app bugs
+
+Two distinct threads. The first was the planned steganography work (§10.4
+option 2). The second, which turned out to matter more, was the contest
+holder's actual instruction -- *"thoroughly test and use the app to find bugs
+and fix them"* -- which produced seven real bugs, one of which explains a
+failure that had been misattributed to the encoder.
+
+### 13.1 Zigzag 1-6 restriction (§10.4 option 2) — built, not validated
+
+`QimOptions` and `PlatformProfile` gained `lumaAcCount` (default
+`AC_INDICES.length` = 24, i.e. unchanged behaviour). Restricting to the
+lowest 6 AC positions is threaded through `buildCoeffStream`, `embedQim`,
+`detectQim` and `getQimCapacityBytes`. Bracket profiles
+`instagram_zz6_d20/d28/d40/d56` mirror the `instagram_d*` ladder: d56 is the
+control (same step as the validated full-band profile, isolating whether
+restriction *alone* helps), the rest test whether restriction permits a
+smaller step.
+
+Two things this immediately re-taught:
+
+**`rsNsym: 32` was needed again, for the same reason as chroma (§12.4).**
+Six of 24 AC positions is a quarter of the raw capacity, and the default
+`rsNsym: 128` is a per-chunk cost -- so parity was eating over half an
+already-small budget. Symptom in the app: *"5 items, all profiles, no text"*.
+`packForCapacity` scores by usefulness-per-byte, and stranger profile events
+are small and dense, so they fill a tight budget completely before any actual
+note text fits. The profile-level fix doubled usable payload.
+
+**The decode-side blind guess had the same omission.** Phase 2 of
+`decodeQimImageFile`'s profile sweep passed `lumaAcCount` but not `rsNsym`,
+so a zz6 image would have been undecodable by auto-detection even though it
+encoded correctly. Found by reading the sweep rather than by a failure --
+worth noting because nothing in the test suite would have caught it.
+
+**Result so far: restriction did not visibly help.** Comparing zz6 d56
+against plain d56 by eye on a real photo, pre-Instagram: *"I found no
+difference, rather only d56 looks better."* That is one observer on one
+photo before any platform round-trip, so it does not settle option 2 --
+the hypothesis was about surviving *sharpening*, which only a real
+Instagram post can test. But it is evidence against the optimistic reading,
+and it is recorded here rather than left as an untested "should help".
+§10.4 option 3 (more repetition instead of larger delta) remains untried.
+
+### 13.2 The self-test bug — why a "d56 image won't decode"
+
+A d56 image produced by the app failed to decode. Diagnosed directly rather
+than guessed at:
+
+- The exact downloaded file was genuinely undecodable, confirmed by pinning
+  `delta: 56` explicitly (so blind-guessing was not the variable).
+- A *fresh* encode of the same source photo at the same `instagram_d56`
+  profile passed self-test and decoded cleanly.
+
+So the pipeline was fine and that specific file was born broken. The cause:
+**`qimSelfTest` ran, failed, logged a warning -- and the code downloaded the
+image anyway and reported `SUCCESS - Download started!`**. The app already
+knew the file was unreadable and handed it over regardless, with the only
+signal being one log line among many. Any user testing several payload sizes
+in a row would end up sharing an undecodable image without noticing.
+
+The first fix was to stop and refuse. That was correct but not sufficient --
+it left the user to guess a smaller payload by hand, and the error text was a
+paragraph of generic speculation about flat covers.
+
+**The real fix: shrink automatically.** The byte-capacity check bounds
+theoretical bit capacity; whether a payload actually *survives* extraction
+(real texture, RS parity, erasure margins) can only be answered by encoding
+it and reading it back. So when the full selection fails self-test, the embed
+path now binary-searches down to the largest event count that passes,
+re-encoding and self-testing at each candidate -- log n attempts, the same
+idiom already used for the byte-capacity fit. If a smaller set works it
+downloads that and logs `Self-test required trimming to N/M events`. An error
+appears only when *zero* events also fails, which rules out payload size
+entirely and means the cover or the delta is at fault -- and that message now
+reports the actual self-test failure reason instead of guessing.
+
+**Known gap:** trimming is whole-event. A single event too long for the
+cover still yields an empty bundle. Truncating one event's content is
+possible but constrained by signatures: `content` is covered by the event id
+and `sig`, so truncation invalidates both and the decoded event fails
+`verifyEvent`. For the user's *own* notes this is clean (we hold the key and
+`buildBundle` already re-signs synthetic events). For another author's note
+it is not -- re-signing altered content with a different key would attribute
+words to someone who did not write them, and shipping it unsigned means an
+unverified item in the decoded feed. Discussed, deliberately not built.
+
+### 13.3 Five more app bugs, and a recurring shape
+
+**`events` had quietly become two things at once.** §12's Global-feed fix
+made the unified `events` state include every author seen on the network --
+correct for display, wrong for embedding, because "embed my feed" silently
+became "embed a slice of the entire Global feed". Combined with
+`packForCapacity`'s density ranking, strangers' cheap profile events crowded
+out real content at any tight capacity. Fixed with an explicit
+`embedCandidates` filter (own identities + follows) at the embed boundary.
+
+**`importedEventIds` was declared and read, but never written.** The Home
+feed filters out self-authored notes unless they are in that set, so a
+decoded own note could never appear -- "Add to my feed" logged success and
+did nothing visible. Now populated in `DetectResultModal`'s `onAccept`.
+
+**The desktop (Tauri) embed path had drifted.** It duplicates the web embed
+logic and had received neither fix: it bundled raw unfiltered `events`, and
+it called `encryptOpen` unconditionally -- so choosing *"Recipients only"* in
+the modal had **zero effect** on desktop builds. Both corrected to mirror the
+web path.
+
+**Blind decode looked like a hang.** The sweep runs up to ~20 full-resolution
+DCT passes, and the progress line was frozen on one string throughout. On a
+large file (a 6MB photo picked by mistake) that is indistinguishable from a
+crash. `QimOptions` gained an `onProgress` callback so the UI shows
+`Trying QIM decode (3/20: zigzag delta 40)...`.
+
+**The recurring shape.** Two of these are the same bug class: *state declared
+and read but never written*, and *one state pool quietly serving two
+purposes*. After finding both, every `useState` in every `.tsx` was audited
+for setters never called and values never read -- no further instances. Worth
+re-running that check after any future state refactor; it is a two-line shell
+loop, not a tool.
+
+### 13.4 Current status
+
+**180 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+Honest caveat on all of §13: everything above is verified locally (tests,
+types, build, and direct diagnosis against the real photo). The app-level
+fixes have been only partially confirmed in a browser -- "Add to my feed" is
+confirmed working by the user; the zz6 text-in-feed result, the auto-shrink
+retry, and the desktop-path fixes are not yet confirmed by a real session.
+Every core-stego edit needs a full dev-server restart to take effect (§9's
+HMR-staleness warning still applies, and a hard browser reload may be needed
+too).
+
+1. **Real-phone bracket testing on Instagram** -- unchanged as the priority.
+   zz6 now has a bracket ladder selectable from the UI for exactly this.
+2. Decide whether §10.4 option 3 (more repetition instead of larger delta)
+   is worth trying, given option 1 (chroma) is unusable at large payloads
+   and option 2 (zigzag) showed no visible improvement pre-platform.
+3. Consider per-event content truncation for own notes (§13.2 gap).
+4. Everything from §12.5 is unchanged and still open.

@@ -109,6 +109,25 @@ export interface QimOptions {
   chromaDelta?: number;
   /** Which chroma channels to embed in. Only meaningful with chromaDelta set. */
   chromaChannels?: Array<"cb" | "cr">;
+  /**
+   * Number of luma AC positions to use, starting from the lowest frequency
+   * (zigzag 1). Default is all 24 (AC_INDICES.length), unchanged behaviour.
+   * HANDOFF.md §10.4 option 2: Instagram's sharpening hits high frequencies
+   * hardest, so restricting to a low-frequency subset (e.g. 6) means every
+   * surviving bit sits somewhere sharpening disturbs less -- fewer slots per
+   * block, but each more robust, which may permit a smaller delta for the
+   * same survival. Untested against real Instagram sharpening as of writing.
+   */
+  lumaAcCount?: number;
+  /**
+   * Called before each blind-detect attempt in decodeQimImageFile's
+   * profile-guessing loop, with a human-readable label and how many attempts
+   * remain total. Each attempt runs a full-resolution DCT pass over the
+   * image, so on a large (multi-megapixel) file the whole sweep can take a
+   * while with nothing else to show for it -- this lets the caller surface
+   * "trying X of Y" instead of a single frozen status line.
+   */
+  onProgress?: (label: string, attempt: number, total: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,12 +259,19 @@ interface CoeffPosition {
   zigzagIdx: number;
 }
 
-function buildCoeffStream(blocksY: number, blocksX: number): CoeffPosition[] {
+function buildCoeffStream(blocksY: number, blocksX: number, acCount: number = AC_INDICES.length): CoeffPosition[] {
   const stream: CoeffPosition[] = [];
   // AC-major order: iterate by AC position first, then across all blocks.
   // This spreads embedding evenly across the entire image instead of
   // concentrating modifications in the top rows of blocks.
-  for (let zi = 0; zi < AC_INDICES.length; zi++) {
+  //
+  // acCount restricts how many of the 24 AC positions (zigzag 1-24) are
+  // actually used, starting from the lowest frequency (zigzag 1). HANDOFF.md
+  // §10.4 option 2: Instagram's sharpening hits high frequencies hardest, so
+  // restricting to the lowest few (e.g. zigzag 1-6) means every surviving
+  // bit sits somewhere sharpening disturbs less -- fewer slots, but each
+  // more robust, which may allow a smaller delta for the same survival.
+  for (let zi = 0; zi < acCount; zi++) {
     for (let by = 0; by < blocksY; by++) {
       for (let bx = 0; bx < blocksX; bx++) {
         stream.push({ blockRow: by, blockCol: bx, zigzagIdx: zi });
@@ -459,6 +485,7 @@ export async function embedQim(
   const chromaDelta = options?.chromaDelta;
   const chromaChannels = options?.chromaChannels ?? [];
   const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
+  const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
 
   // Step 1: Decode JPEG to pixel data
   const { data: pixels, width, height } = await decodeJpegToPixels(imageData);
@@ -494,7 +521,7 @@ export async function embedQim(
   // Work on luminance only (Y channel), applied back to all RGB channels proportionally
   const blocksY = Math.floor(height / 8);
   const blocksX = Math.floor(width / 8);
-  const stream = buildCoeffStream(blocksY, blocksX);
+  const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount);
 
   // Chroma slots are filled before any luma slot (see stego-color.ts and
   // §10.4 in HANDOFF.md): chroma perturbation is far less visible than luma,
@@ -557,7 +584,7 @@ export async function embedQim(
     // Apply QIM to the AC positions that need embedding for this block
     let modified = false;
     const blocksPerPlane = blocksY * blocksX;
-    for (let zi = 0; zi < AC_INDICES.length; zi++) {
+    for (let zi = 0; zi < lumaAcCount; zi++) {
       // AC-major ordering: stream index = zi * (blocksY * blocksX) + br * blocksX + bc
       const streamIdx = zi * blocksPerPlane + br * blocksX + bc;
       if (streamIdx >= lumaBits.length) continue;
@@ -687,6 +714,7 @@ export async function detectQim(
   const chromaDelta = options?.chromaDelta;
   const chromaChannels = options?.chromaChannels ?? [];
   const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
+  const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
 
   try {
     // Step 1: Decode JPEG to pixel data
@@ -695,7 +723,7 @@ export async function detectQim(
     // Step 2+3: Extract QIM bits from all 8x8 blocks
     const blocksY = Math.floor(height / 8);
     const blocksX = Math.floor(width / 8);
-    const stream = buildCoeffStream(blocksY, blocksX);
+    const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount);
 
     const qt = quantizationTable(quality);
     const yChannel = extractYChannel(pixels, width, height);
@@ -911,10 +939,11 @@ export function getQimCapacityBytes(
 ): number {
   const repeat = options?.repeat ?? QIM_REPEAT;
   const rsNsym = options?.rsNsym ?? QIM_RS_NSYM;
+  const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
 
   const blocksY = Math.floor(height / 8);
   const blocksX = Math.floor(width / 8);
-  let totalCoeffs = blocksY * blocksX * AC_INDICES.length;
+  let totalCoeffs = blocksY * blocksX * lumaAcCount;
 
   // Mirrors embedQim exactly: chroma slots (§10.4, scalar-per-block scheme
   // per §11 second addendum) add one bit per super-block per channel.
@@ -955,7 +984,8 @@ export async function encodeQimImageFile(
   const chromaDelta = options?.chromaDelta ?? prof?.chromaDelta;
   const chromaChannels = options?.chromaChannels ?? prof?.chromaChannels;
   const rsNsym = options?.rsNsym ?? prof?.rsNsym;
-  const result = await embedQim(jpegBytes, payload, { ...options, delta, chromaDelta, chromaChannels, rsNsym });
+  const lumaAcCount = options?.lumaAcCount ?? prof?.lumaAcCount;
+  const result = await embedQim(jpegBytes, payload, { ...options, delta, chromaDelta, chromaChannels, rsNsym, lumaAcCount });
   return new Blob([result], { type: "image/jpeg" });
 }
 
@@ -984,17 +1014,42 @@ export async function decodeQimImageFile(
       // and fails. Try whole {delta, chromaDelta, chromaChannels, rsNsym}
       // bundles from the small set of profiles that actually enable chroma.
       const chromaCandidates = Object.values(PLATFORM_PROFILES).filter((p) => p.chromaDelta !== undefined);
+      // Phase 2: zigzag-restricted profiles (§10.4 option 2) -- a smaller
+      // lumaAcCount changes the AC-major stream layout, so like chroma this
+      // isn't decodable by a guess that assumes the full 24 positions.
+      const zigzagCandidates = Object.values(PLATFORM_PROFILES).filter(
+        (p) => p.lumaAcCount !== undefined && p.chromaDelta === undefined,
+      );
+      // Phase 3: plain luma-only sweep, full AC range, chroma disabled --
+      // backward compatible with images made before this change and other
+      // platforms.
+      const totalAttempts = chromaCandidates.length + zigzagCandidates.length + DETECT_DELTAS.length;
+      let attemptNum = 0;
+      const onProgress = options?.onProgress;
+
       for (const prof of chromaCandidates) {
+        attemptNum++;
+        onProgress?.(`chroma delta ${prof.chromaDelta}`, attemptNum, totalAttempts);
         result = await detectQim(jpegBytes, {
           ...options, delta: prof.delta, chromaDelta: prof.chromaDelta,
-          chromaChannels: prof.chromaChannels, rsNsym: prof.rsNsym,
+          chromaChannels: prof.chromaChannels, rsNsym: prof.rsNsym, lumaAcCount: prof.lumaAcCount,
         });
         if (result && result.length > 0) break;
       }
-      // Phase 2: plain luma-only sweep, chroma disabled -- backward
-      // compatible with images made before this change and other platforms.
+      if (!result || result.length === 0) {
+        for (const prof of zigzagCandidates) {
+          attemptNum++;
+          onProgress?.(`zigzag delta ${prof.delta}`, attemptNum, totalAttempts);
+          result = await detectQim(jpegBytes, {
+            ...options, delta: prof.delta, lumaAcCount: prof.lumaAcCount, rsNsym: prof.rsNsym,
+          });
+          if (result && result.length > 0) break;
+        }
+      }
       if (!result || result.length === 0) {
         for (const delta of DETECT_DELTAS) {
+          attemptNum++;
+          onProgress?.(`delta ${delta}`, attemptNum, totalAttempts);
           result = await detectQim(jpegBytes, { ...options, delta });
           if (result && result.length > 0) break;
         }
@@ -1133,6 +1188,7 @@ export async function getQimCapacityForFile(
     chromaDelta: prof.chromaDelta,
     chromaChannels: prof.chromaChannels,
     rsNsym: prof.rsNsym,
+    lumaAcCount: prof.lumaAcCount,
   });
   return { capacityBytes, width: w, height: h };
 }

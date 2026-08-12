@@ -78,6 +78,16 @@ export interface PlatformProfile {
    * smaller nsym so most of that budget goes to payload, not overhead.
    */
   rsNsym?: number;
+  /**
+   * Number of luma AC positions to use, starting from the lowest frequency
+   * (zigzag 1). Undefined means all 24 (unchanged behaviour). HANDOFF.md
+   * §10.4 option 2: Instagram's sharpening hits high frequencies hardest,
+   * so restricting to a low-frequency subset means every surviving bit
+   * sits somewhere sharpening disturbs less -- fewer slots per block, but
+   * each more robust, which may permit a smaller delta for the same
+   * survival. Untested against real Instagram sharpening as of writing.
+   */
+  lumaAcCount?: number;
 }
 
 /**
@@ -166,6 +176,41 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     width: 1440, square: true, delta: 56,
     chromaDelta: 56, chromaChannels: ["cb", "cr"], rsNsym: 32,
     note: "Chroma bracketing: step 56. Luma fixed at 56.",
+  },
+  // Zigzag-restricted luma bracket (§10.4 option 2): instead of routing
+  // around luma visibility with chroma, restrict luma itself to the lowest
+  // 6 AC positions -- Instagram's sharpening hits high frequencies hardest,
+  // so every surviving bit sits somewhere sharpening disturbs less. d56 is
+  // the control (same delta as the validated full-band profile, isolates
+  // whether restriction alone helps); d20/d28/d40 test whether restriction
+  // permits a smaller step too. No chroma, so this is a clean before/after
+  // against the existing instagram_d56 baseline. Real-device bracketing not
+  // yet done -- untested against real sharpening.
+  //
+  // rsNsym: 32, not the QIM default 128 -- restricting to 6 of 24 AC
+  // positions cuts raw capacity to a quarter of the full-band profile
+  // (measured: ~9.6KB usable there vs ~2.4KB here at the default nsym).
+  // RS parity is a per-chunk cost (§12.4), so at the default it was eating
+  // more than half of an already-small budget; the greedy event packer
+  // (packForCapacity, scores by usefulness-per-byte) then fills that whole
+  // budget with small, high-density profile events before any actual note
+  // text fits -- exactly what "5 items, all profiles, no text" was. 32
+  // roughly doubles the usable payload for the same image.
+  instagram_zz6_d20: {
+    width: 1440, square: true, delta: 20, lumaAcCount: 6, rsNsym: 32,
+    note: "Zigzag 1-6 only, step 20. Bracketing whether restriction permits a smaller step.",
+  },
+  instagram_zz6_d28: {
+    width: 1440, square: true, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    note: "Zigzag 1-6 only, step 28. Bracketing whether restriction permits a smaller step.",
+  },
+  instagram_zz6_d40: {
+    width: 1440, square: true, delta: 40, lumaAcCount: 6, rsNsym: 32,
+    note: "Zigzag 1-6 only, step 40. Bracketing whether restriction permits a smaller step.",
+  },
+  instagram_zz6_d56: {
+    width: 1440, square: true, delta: 56, lumaAcCount: 6, rsNsym: 32,
+    note: "Zigzag 1-6 only, step 56 (control -- same step as the validated full-band profile).",
   },
   /**
    * Safe everywhere: 1440 square clears WhatsApp's 1600 cap and Telegram's

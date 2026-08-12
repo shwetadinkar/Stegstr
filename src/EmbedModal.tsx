@@ -30,6 +30,10 @@ const PLATFORM_LABELS: Record<string, string> = {
   instagram_chroma_d28: "Instagram test - chroma step 28",
   instagram_chroma_d40: "Instagram test - chroma step 40",
   instagram_chroma_d56: "Instagram test - chroma step 56",
+  instagram_zz6_d20: "Instagram test - zigzag1-6 step 20",
+  instagram_zz6_d28: "Instagram test - zigzag1-6 step 28",
+  instagram_zz6_d40: "Instagram test - zigzag1-6 step 40",
+  instagram_zz6_d56: "Instagram test - zigzag1-6 step 56",
   none: "No resize (original size)",
 };
 

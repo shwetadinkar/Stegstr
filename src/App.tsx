@@ -1115,7 +1115,11 @@ function App({ profile }: { profile: string | null }) {
         setStegoProgress("Trying QIM decode (robust)...");
         addStegoLog("Trying QIM steganography decode...");
         try {
-          result = await decodeQimImageFile(file);
+          result = await decodeQimImageFile(file, {
+            onProgress: (label, attempt, total) => {
+              setStegoProgress(`Trying QIM decode (${attempt}/${total}: ${label})...`);
+            },
+          });
           if (result.ok) {
             addStegoLog(`QIM decode OK! Payload: ${result.payload?.length ?? 0} chars`);
           } else {
@@ -1553,6 +1557,17 @@ function App({ profile }: { profile: string | null }) {
           }
           return { version: STEGSTR_BUNDLE_VERSION, events: [...synthetic, ...eventList] } as NostrStateBundle;
         };
+        // Restrict the embed candidate pool to your own identities and
+        // followed accounts. `events` is the same state the Global feed tab
+        // reads from, which -- correctly, for display -- now includes every
+        // author encountered on the network (§12 Global feed fix). Without
+        // this filter, "embed my feed" silently became "embed a slice of
+        // the entire Global feed": strangers' profile events are small and
+        // score highly in packForCapacity's density ranking, so at any
+        // capacity tight enough to matter they crowded out actual note text
+        // from people you follow, or yourself.
+        const embedCandidates = events.filter((e) => ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey));
+
         // Helper: choose which events to carry, then encrypt to fit capacity.
         //
         // This previously took the whole event list, encrypted it, and on
@@ -1577,11 +1592,11 @@ function App({ profile }: { profile: string | null }) {
           return stegoCrypto.encryptOpen(jsonString);
         };
 
-        const encryptAndFit = async (maxPayloadBytes: number) => {
+        const encryptAndFit = async (maxPayloadBytes: number): Promise<{ encrypted: Uint8Array; events: NostrEvent[] } | null> => {
           if (!maxPayloadBytes) {
-            const enc = await encryptEvents(events);
-            addStegoLog(`Encrypted: ${enc.length} bytes (${events.length} events, no cap)`);
-            return enc;
+            const enc = await encryptEvents(embedCandidates);
+            addStegoLog(`Encrypted: ${enc.length} bytes (${embedCandidates.length} events, no cap)`);
+            return { encrypted: enc, events: embedCandidates };
           }
 
           // The budget applies to the ENCRYPTED payload. stego-crypto does not
@@ -1593,7 +1608,7 @@ function App({ profile }: { profile: string | null }) {
           // ratio 1.05 covers the JSON plus the encryption envelope (magic, IV,
           // GCM tag, and any per-recipient key wrapping). The binary search
           // below closes whatever this estimate gets wrong.
-          const packed = packForCapacity(events, {
+          const packed = packForCapacity(embedCandidates, {
             budget: Math.floor(maxPayloadBytes * 0.85),
             compressionRatio: 1.05,
             self: effectivePrivKey
@@ -1602,7 +1617,7 @@ function App({ profile }: { profile: string | null }) {
             follows: contactsSet,
           });
           addStegoLog(
-            `Selected ${packed.events.length}/${events.length} events by priority` +
+            `Selected ${packed.events.length}/${embedCandidates.length} events by priority` +
             (packed.droppedOrphans ? `, dropped ${packed.droppedOrphans} orphan replies` : "") +
             ` (~${packed.estimatedBytes}B est, ${maxPayloadBytes}B budget)`,
           );
@@ -1646,11 +1661,11 @@ function App({ profile }: { profile: string | null }) {
             );
             return null;
           }
-          if (bestCount < events.length) {
-            addStegoLog(`Carrying ${bestCount}/${events.length} events (${best.length}B of ${maxPayloadBytes}B)`);
+          if (bestCount < embedCandidates.length) {
+            addStegoLog(`Carrying ${bestCount}/${embedCandidates.length} events (${best.length}B of ${maxPayloadBytes}B)`);
           }
           addStegoLog(`Encrypted: ${best.length} bytes`);
-          return best;
+          return { encrypted: best, events: packed.events.slice(0, bestCount) };
         };
 
         if (embedMethod === "qim") {
@@ -1681,46 +1696,76 @@ function App({ profile }: { profile: string | null }) {
           addStegoLog(`QIM capacity: ${maxPayloadBytes} bytes (${resW}x${resH})`);
 
           // Step 3: Encrypt and fit payload
-          const encrypted = await encryptAndFit(maxPayloadBytes);
-          if (!encrypted) {
+          const fitted = await encryptAndFit(maxPayloadBytes);
+          if (!fitted) {
             setDecodeError("Image too small for stego payload (try a larger image or fewer events)");
             setEmbedding(false);
             return;
           }
+          const fittedEvents = fitted.events;
 
-          // Step 4: QIM embed
-          setStegoProgress("Embedding data into image (QIM encode)...");
+          // Step 4+5: Encode and self-test. The byte-capacity check above
+          // only bounds theoretical bit capacity -- whether a given payload
+          // actually survives QIM extraction (real texture, RS parity,
+          // erasure margins) can only be answered by really encoding and
+          // reading it back. When the full selection doesn't survive, binary
+          // search down to the largest event count that does, instead of
+          // just failing and telling the user to go guess a smaller size
+          // themselves.
+          type EncodeAttempt = { ok: boolean; n: number; blob?: Blob; encrypted?: Uint8Array; error?: string };
+          const tryEncode = async (n: number): Promise<EncodeAttempt> => {
+            const list = fittedEvents.slice(0, n);
+            const enc = await encryptEvents(list);
+            setStegoProgress(`Embedding and verifying (${n} event${n === 1 ? "" : "s"})...`);
+            let blob: Blob;
+            try {
+              blob = await encodeQimImageFile(resizedCover, enc, { platform: targetPlatform });
+            } catch (e) {
+              const error = `encode failed: ${e instanceof Error ? e.message : String(e)}`;
+              addStegoLog(`  ${n} events -> ${error}`);
+              return { ok: false, n, error };
+            }
+            const st = await qimSelfTest(blob, enc);
+            addStegoLog(`  ${n} events -> self-test ${st.ok ? "PASSED" : `FAILED (${st.error})`}`);
+            return st.ok ? { ok: true, n, blob, encrypted: enc } : { ok: false, n, error: st.error };
+          };
+
           addStegoLog("Running QIM steganography encode...");
-          let blob: Blob;
-          try {
-            blob = await encodeQimImageFile(resizedCover, encrypted, { platform: targetPlatform });
-            addStegoLog(`QIM encode complete! Output: ${blob.size} bytes JPEG`);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            setDecodeError(`QIM encode failed: ${msg}`);
-            setEmbedding(false);
-            return;
+          let best = await tryEncode(fittedEvents.length);
+          if (!best.ok && fittedEvents.length > 0) {
+            addStegoLog("Full selection did not survive self-test; searching for the largest count that does...");
+            let lo = 0, hi = fittedEvents.length - 1;
+            let bestPass: EncodeAttempt | null = null;
+            let zeroAttempt: EncodeAttempt | null = null;
+            while (lo <= hi) {
+              const mid = Math.floor((lo + hi) / 2);
+              const attempt = await tryEncode(mid);
+              if (mid === 0) zeroAttempt = attempt;
+              if (attempt.ok) { bestPass = attempt; lo = mid + 1; } else { hi = mid - 1; }
+            }
+            best = bestPass ?? zeroAttempt ?? best;
           }
 
-          // Step 5: Round-trip self-test
-          setStegoProgress("Verifying embed integrity (self-test)...");
-          addStegoLog("Running round-trip self-test...");
-          const selfTestResult = await qimSelfTest(blob, encrypted);
-          if (selfTestResult.ok) {
-            addStegoLog("Self-test PASSED! Payload survives encode/decode round-trip.");
-          } else {
-            addStegoLog(`Self-test FAILED: ${selfTestResult.error}`);
-            // A failed self-test means the payload cannot even survive being
-            // read straight back, let alone a platform. Covers with large flat
-            // areas -- logos, screenshots, plain backgrounds -- are the usual
-            // cause: there is no texture to hide the embedding in. Say so,
-            // rather than letting the user discover it after a phone round trip.
+          if (!best.ok) {
+            // Even an empty bundle (bare encryption envelope, no events)
+            // does not survive read-back on this cover at this delta -- that
+            // rules out payload size as the cause. It's the cover image
+            // itself (usually too flat/low-texture) or the platform target.
             setDecodeError(
-              "This image could not be read back reliably. Covers with large flat " +
-              "areas (logos, screenshots, plain backgrounds) have little texture " +
-              "to hide data in. Try a photograph instead.",
+              `This cover image cannot reliably carry any payload at the ${targetPlatform} settings ` +
+              `(${best.error}). Try a different, more textured photo, or the Dot method.`,
             );
-            addStegoLog("WARNING: Payload may not survive platform transforms. Consider using Dot method instead.");
+            addStegoLog("Embed cancelled: no payload size survives self-test on this cover.");
+            setEmbedding(false);
+            setStegoProgress("");
+            return;
+          }
+          const blob = best.blob!;
+          addStegoLog(`QIM encode complete! Output: ${blob.size} bytes JPEG`);
+          if (best.n < fittedEvents.length) {
+            addStegoLog(`Self-test required trimming to ${best.n}/${fittedEvents.length} events to survive reliably.`);
+          } else {
+            addStegoLog("Self-test PASSED! Payload survives encode/decode round-trip.");
           }
 
           // Step 6: Download
@@ -1746,13 +1791,13 @@ function App({ profile }: { profile: string | null }) {
         // ===== DOT BRANCH (legacy) =====
         const maxPayloadBytes = await getDotCapacityForFile(embedCoverFile);
         addStegoLog(`Dot capacity: ${maxPayloadBytes} bytes`);
-        const encrypted = await encryptAndFit(maxPayloadBytes);
-        if (!encrypted) {
+        const fitted = await encryptAndFit(maxPayloadBytes);
+        if (!fitted) {
           setDecodeError("Image too small for stego payload");
           setEmbedding(false);
           return;
         }
-        const payloadToEmbed = "base64:" + uint8ArrayToBase64(encrypted);
+        const payloadToEmbed = "base64:" + uint8ArrayToBase64(fitted.encrypted);
         setStegoProgress("Embedding data into image (Dot encode)...");
         addStegoLog("Running Dot steganography encode...");
         const blob = await encodeStegoToBlob(embedCoverFile, payloadToEmbed);
@@ -1825,13 +1870,27 @@ function App({ profile }: { profile: string | null }) {
         }
         return { version: STEGSTR_BUNDLE_VERSION, events: [...syntheticKind0, ...eventList] } as NostrStateBundle;
       };
-      let trimmedEvents = [...events];
+      // Same restriction as the web path (§12): without it, strangers'
+      // profile events picked up by the Global feed subscription get carried
+      // into the desktop embed too.
+      const embedCandidates = events.filter((e) => ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey));
+      let trimmedEvents = [...embedCandidates];
       let jsonString = "";
       let payloadBytes: Uint8Array | null = null;
       while (true) {
         const bundle = await buildBundle(trimmedEvents);
         jsonString = JSON.stringify(bundle);
-        const encrypted = await stegoCrypto.encryptOpen(jsonString);
+        // Mirror the web path's encryptEvents: honour "recipients only" mode
+        // instead of always embedding open. Previously this always called
+        // encryptOpen, so choosing "Recipients only" in the modal silently
+        // had no effect on desktop builds.
+        const encrypted = embedRecipientMode === "recipients" && embedRecipients.length > 0 && effectivePrivKey
+          ? await stegoCrypto.encryptForRecipients(
+              jsonString,
+              effectivePrivKey,
+              Array.from(new Set([Nostr.getPublicKey(Nostr.hexToBytes(effectivePrivKey)), ...embedRecipients])),
+            )
+          : await stegoCrypto.encryptOpen(jsonString);
         if (!maxPayloadBytes || encrypted.length <= maxPayloadBytes) {
           payloadBytes = encrypted;
           break;
@@ -1843,8 +1902,8 @@ function App({ profile }: { profile: string | null }) {
         setDecodeError("Image too small for stego payload");
         return;
       }
-      if (trimmedEvents.length < events.length) {
-        addStegoLog(`Trimmed events: kept ${trimmedEvents.length}/${events.length} to fit capacity`);
+      if (trimmedEvents.length < embedCandidates.length) {
+        addStegoLog(`Trimmed events: kept ${trimmedEvents.length}/${embedCandidates.length} to fit capacity`);
       }
       const payloadToEmbed = "base64:" + uint8ArrayToBase64(payloadBytes);
       setStegoProgress("Embedding with Dot (offset, robust)...");
@@ -2857,6 +2916,20 @@ function App({ profile }: { profile: string | null }) {
               const byId = new Map(prev.map((e) => [e.id, e]));
               accepted.forEach((e) => byId.set(e.id, e as NostrEvent));
               return Array.from(byId.values()).sort((a, b) => b.created_at - a.created_at);
+            });
+            // The feed filter hides a note authored by one of your OWN
+            // identities unless you're currently viewing-as that identity,
+            // or its id is in importedEventIds -- otherwise embedding your
+            // own feed into an image and decoding it back would require
+            // switching identities just to see what you just imported.
+            // importedEventIds was declared and read for exactly this, but
+            // never written anywhere, so the exception could never fire and
+            // a just-decoded self-authored note would silently vanish from
+            // the feed despite "Added N item(s)" reporting success.
+            setImportedEventIds((prev) => {
+              const next = new Set(prev);
+              accepted.forEach((e) => next.add(e.id));
+              return next;
             });
             addStegoLog(`Added ${accepted.length} item(s) to feed`);
             setDetectReview(null);
