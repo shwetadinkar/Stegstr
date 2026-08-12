@@ -185,6 +185,15 @@ export function connectRelays(
   // Initial feed, plus the authors' own relay lists so routing can improve.
   sub("feed", [{ kinds: [1, 6, 7], authors: ourPubkeys, limit: 100 }]);
   sub("meta", [{ kinds: [0, 3, 10002], authors: ourPubkeys }]);
+  // Global discovery. relay.ts bundled author-unscoped filters (kinds 0 and
+  // 1/6 with no `authors` field) into the same subscription so the "Global"
+  // feed tab could show content from anyone, not just follows -- App.tsx's
+  // feedFilter==="following" branch already narrows this down client-side
+  // (contactsSet.has(authorPk)), so it only needs the wider stream to filter
+  // from. The rewrite kept only author-scoped filters, so the Global tab had
+  // nothing to show: the sockets connected fine, but nothing that wasn't
+  // already a follow was ever requested.
+  sub("global", [{ kinds: [1, 6], limit: 100 }, { kinds: [0], limit: 200 }]);
 
   if (onEose) {
     setTimeout(() => { if (!eosed) { eosed = true; onEose(); } }, 1500);
