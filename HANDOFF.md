@@ -739,3 +739,96 @@ the measured case, not zero.
 3. Everything else from §10.7 (Telegram app confirmation, release workflow,
    README, NIP-44 wiring, Rust matched-table encoder, MCP server, audio) is
    unchanged and still open.
+
+---
+
+## 12. Fourth addendum — two real bugs found by actually running the app
+
+The contest holder's guidance is explicit: test and use the app to find bugs
+and fix them, rather than add speculative features. Both bugs below were
+found exactly that way -- by embedding through the real app in a real
+browser and hitting real failures, not by reasoning about the code in the
+abstract. Both are now fixed and covered by regression tests.
+
+### 12.1 Chroma embedding failed on a real photo -- redesigned, not patched
+
+§11's DCT-AC-coefficient chroma scheme (24 slots/block, mirroring luma)
+passed every test built for it and then failed immediately on the first real
+app self-test, with a real photo, at delta=28. Root cause, found by
+capturing raw embedded bits against raw detected bits and bisecting: a
+super-block with real embedded AC content is not spatially flat -- non-zero
+AC coefficients ARE spatial variation by definition. JPEG decoders
+reconstruct chroma with smooth ("fancy") upsampling that blends
+continuously across the whole image, with no concept of an 8x8-block
+boundary in the reduced-resolution chroma plane. That blending corrupted
+exactly the fine structure the scheme depended on.
+
+Two things confirmed this was a spatial-domain mismatch, not a marginal
+noise-margin problem: raw bit-error rate got *worse* as chromaDelta
+increased (17,400 mismatches at delta=28 rising to 31,454 at delta=128 on a
+388,800-bit test), and disabling the texture-adaptive step made no
+difference. A noise-margin problem gets better with more margin; this got
+worse, because more margin meant larger coefficient swings, meaning larger
+internal spatial variation for the decoder to smear.
+
+**Fix: one scalar QIM value per super-block per channel, not 24 DCT
+coefficients.** Write it as a genuinely flat, uniform 16x16 patch (survives
+the encoder's subsampling for the same reason a flat 2x2 tile does). Read it
+back from the block's *safe interior* only (excludes ~4px on each edge,
+clear of the ~2px zone empirically observed to blend toward a neighbour).
+No DCT, no chroma quantization table, no texture-adaptive step -- that
+machinery measured activity from DCT coefficients above the embedding band,
+which don't exist in a scalar-domain scheme.
+
+Cost: capacity drops from ~29KB to **~16,200 raw bits (roughly 250-300
+usable bytes at the default RS overhead)**. This isn't a regression from
+where this was always going to land -- §10.4's own fallback plan for
+Instagram was a small-payload pointer tier (a nostr event id + a NIP-44 key,
+comfortably under 300 bytes), and that's exactly what this capacity now
+supports cleanly, verified through a real encode/decode round trip rather
+than assumed.
+
+Re-verified in CI against the *exact* scenario that broke: a payload sized
+to span both channels and overflow into luma now round-trips correctly.
+
+### 12.2 The rewritten networking layer lost the Global feed
+
+Reported symptom: relay websockets connect fine (confirmed via browser
+DevTools -- 4 of 5 relays returning HTTP 101, a successful handshake), but
+the Global feed tab never shows anything from outside your own follows.
+
+Root cause, found by diffing the networking rewrite (`net-adapter.ts`)
+against the pre-rewrite `relay.ts` (still present on `origin/main`, the
+branch that predates the §4.2 rewrite): the old code's initial subscription
+bundled multiple filters into one REQ, including author-*unscoped* ones --
+`{kinds:[1], limit:300}` with no `authors` field, which is what a Global
+feed actually is. The rewrite's `connectRelays` kept only author-scoped
+filters (`authors: ourPubkeys`) for both the "feed" and "meta"
+subscriptions, so the Global feed was never asking relays for anything
+beyond the user's own follows. Not a connection bug -- a missing filter.
+
+`App.tsx`'s `feedFilter === "following"` branch already correctly narrows
+the *displayed* set down to `contactsSet` client-side, so no UI code needed
+to change -- the display layer was already correct and had nothing to work
+with.
+
+**Fix**: `net-adapter.ts`'s `connectRelays` now also sends an
+author-unscoped subscription (`{kinds:[1,6],limit:100}` +
+`{kinds:[0],limit:200}`), matching what the pre-rewrite code did. Verified
+`RelayPool.subscribe` (`net-pool.ts`) is filter-agnostic -- it has no
+assumption that a filter includes `authors`, so this required no changes
+there.
+
+### 12.3 Current status
+
+**179 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+1. **Real-phone bracket testing on Instagram** — now testing the redesigned
+   scalar-per-block scheme rather than the broken DCT-AC one. Still the
+   priority; still needs a human with an Instagram account.
+2. Verify the Global feed fix actually populates in a real browser against
+   real relays (I can't open a browser myself -- this needs to be confirmed
+   by running the app).
+3. Everything from §11.4 (luma-delta re-bracketing once chroma is proven,
+   Telegram app confirmation, release workflow, README, NIP-44, Rust
+   encoder, MCP server, audio) is unchanged and still open.
