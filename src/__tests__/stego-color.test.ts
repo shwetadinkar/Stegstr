@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  rgbToYCbCr, ycbcrToRgb, readChromaSuperblockScalar, writeChromaSuperblockScalar,
+  rgbToYCbCr, ycbcrToRgb, readChromaSuperblockScalar, shiftChromaSuperblock,
   CHROMA_SUPERBLOCK_PX,
 } from "../stego-color";
 
@@ -36,20 +36,30 @@ describe("chroma super-block scalar read / write", () => {
     expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(77, 6);
   });
 
-  it("write is flat and uniform across the whole 16x16 block", () => {
-    const plane = new Float64Array(width * height).fill(10);
-    writeChromaSuperblockScalar(plane, width, 0, 0, 99);
+  it("shift is additive and uniform across the whole 16x16 block, preserving relative structure", () => {
+    const plane = new Float64Array(width * height);
+    for (let r = 0; r < CHROMA_SUPERBLOCK_PX; r++) {
+      for (let c = 0; c < CHROMA_SUPERBLOCK_PX; c++) plane[r * width + c] = 50 + (r + c);
+    }
+    const before = plane.slice();
+    shiftChromaSuperblock(plane, width, 0, 0, 25);
     for (let r = 0; r < CHROMA_SUPERBLOCK_PX; r++) {
       for (let c = 0; c < CHROMA_SUPERBLOCK_PX; c++) {
-        expect(plane[r * width + c]).toBe(99);
+        expect(plane[r * width + c]).toBe(before[r * width + c] + 25);
       }
     }
   });
 
   it("read/write round-trips exactly for a flat block", () => {
     const plane = new Float64Array(width * height).fill(0);
-    writeChromaSuperblockScalar(plane, width, 0, 0, 173);
+    shiftChromaSuperblock(plane, width, 0, 0, 173);
     expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(173, 6);
+  });
+
+  it("shift clamps to [0,255]", () => {
+    const plane = new Float64Array(width * height).fill(240);
+    shiftChromaSuperblock(plane, width, 0, 0, 50);
+    expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(255, 6);
   });
 
   it("read averages only the safe interior, ignoring edge contamination", () => {
@@ -69,9 +79,9 @@ describe("chroma super-block scalar read / write", () => {
     expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(200, 6);
   });
 
-  it("write does not touch pixels outside the addressed super-block", () => {
+  it("shift does not touch pixels outside the addressed super-block", () => {
     const plane = new Float64Array(width * height).fill(10);
-    writeChromaSuperblockScalar(plane, width, 0, 1, 200); // second super-block, columns 16-31
+    shiftChromaSuperblock(plane, width, 0, 1, 190); // second super-block, columns 16-31
     // First super-block (columns 0-15) must be untouched.
     for (let r = 0; r < 16; r++) {
       for (let c = 0; c < 16; c++) {

@@ -66,6 +66,18 @@ export interface PlatformProfile {
   chromaDelta?: number;
   /** Which chroma channels to embed in, when chromaDelta is set. */
   chromaChannels?: Array<"cb" | "cr">;
+  /**
+   * Reed-Solomon parity symbols. Undefined means the QIM default (128).
+   * RS parity is a PER-CHUNK cost (each 255-byte codeword chunk pays nsym
+   * bytes of parity), so a large nsym on a small payload can consume most
+   * of a small capacity budget on redundancy rather than message -- exactly
+   * the failure mode chroma's own tiny capacity (~250-400B) hits: at the
+   * default 128, RS parity alone for even a ~60B message needed ~99% of the
+   * whole cb channel, touching far more super-blocks than the payload
+   * itself required. Profiles built around chroma's small capacity set a
+   * smaller nsym so most of that budget goes to payload, not overhead.
+   */
+  rsNsym?: number;
 }
 
 /**
@@ -94,7 +106,7 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
   instagram: {
     width: 1440, square: true, delta: 56,
-    chromaDelta: 28, chromaChannels: ["cb", "cr"],
+    chromaDelta: 28, chromaChannels: ["cb", "cr"], rsNsym: 32,
     note: "1440x1440 square, larger step. Instagram sharpens; 28 and 40 did not survive, 56 did. "
       + "Chroma channel carries payload first (invisible), luma only for overflow -- §10.4, unbracketed on a real device yet.",
   },
@@ -142,17 +154,17 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // yet done -- these exist so it can be run from the UI without code changes.
   instagram_chroma_d28: {
     width: 1440, square: true, delta: 56,
-    chromaDelta: 28, chromaChannels: ["cb", "cr"],
+    chromaDelta: 28, chromaChannels: ["cb", "cr"], rsNsym: 32,
     note: "Chroma bracketing: step 28. Luma fixed at 56.",
   },
   instagram_chroma_d40: {
     width: 1440, square: true, delta: 56,
-    chromaDelta: 40, chromaChannels: ["cb", "cr"],
+    chromaDelta: 40, chromaChannels: ["cb", "cr"], rsNsym: 32,
     note: "Chroma bracketing: step 40. Luma fixed at 56.",
   },
   instagram_chroma_d56: {
     width: 1440, square: true, delta: 56,
-    chromaDelta: 56, chromaChannels: ["cb", "cr"],
+    chromaDelta: 56, chromaChannels: ["cb", "cr"], rsNsym: 32,
     note: "Chroma bracketing: step 56. Luma fixed at 56.",
   },
   /**
@@ -163,7 +175,7 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
    */
   universal: {
     width: 1440, square: true, delta: 56,
-    chromaDelta: 28, chromaChannels: ["cb", "cr"],
+    chromaDelta: 28, chromaChannels: ["cb", "cr"], rsNsym: 32,
     note: "Square 1440 at Instagram's step size. Survives WhatsApp, Telegram and Instagram.",
   },
   none: {

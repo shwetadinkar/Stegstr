@@ -34,7 +34,7 @@ import {
 } from "./stego-adaptive";
 import {
   ycbcrToRgb, extractChromaPlanes,
-  readChromaSuperblockScalar, writeChromaSuperblockScalar, CHROMA_SUPERBLOCK_PX,
+  readChromaSuperblockScalar, shiftChromaSuperblock, CHROMA_SUPERBLOCK_PX,
 } from "./stego-color";
 
 /**
@@ -59,7 +59,6 @@ const QIM_DELTA = 14;
 const QIM_RS_NSYM = 128;
 const QIM_REPEAT = 5;
 const QIM_EMBED_QUALITY = 75;
-const QIM_ERASURE_MARGIN = QIM_DELTA / 6.0;
 
 // ---------------------------------------------------------------------------
 // Platform pre-resize widths (matching Python channel_simulator)
@@ -165,6 +164,37 @@ function majorityBits(bits: number[], repeat: number): number[] {
     out.push(sum > Math.floor(repeat / 2) ? 1 : 0);
   }
   return out;
+}
+
+/**
+ * Maps a logical bit-stream position to a physical block position, spreading
+ * the `repeat` copies of one logical bit across widely-separated physical
+ * positions (a standard block interleaver) instead of `repeat` adjacent
+ * ones. Chroma's block stream is visited in simple row-major order, so
+ * without this, repeat-copies of a bit land in nearby blocks -- if that
+ * local region has elevated error rates (measured on a real photo: errors
+ * concentrated in the flat ceiling area), all `repeat` copies can fail
+ * together and majority voting gets none of the independence it's supposed
+ * to rely on.
+ *
+ * `capacity` is the FULL number of physical slots available, not how many a
+ * given payload actually uses -- the mapping only depends on capacity and
+ * repeat, both known to encoder and decoder without agreeing on payload size
+ * in advance (decode doesn't know payload size until it's decoded the
+ * header, same as everywhere else in this file).
+ *
+ * Only applied to chroma. Luma's AC-major ordering already spreads a single
+ * AC position across the whole image before advancing (see buildCoeffStream)
+ * and is validated working on real platforms (HANDOFF.md §10.1) -- changing
+ * it risks regressing something with no measured problem to justify it.
+ */
+function interleavedPhysicalIndex(logicalIndex: number, capacity: number, repeat: number): number {
+  if (repeat <= 1) return logicalIndex;
+  const groups = Math.floor(capacity / repeat);
+  if (groups === 0 || logicalIndex >= groups * repeat) return logicalIndex;
+  const k = Math.floor(logicalIndex / repeat);
+  const r = logicalIndex % repeat;
+  return r * groups + k;
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +602,11 @@ export async function embedQim(
 
   // Step 7 (chroma): embed chromaBits into Cb/Cr, one scalar QIM value per
   // super-block per channel (see stego-color.ts module doc for why -- a
-  // DCT-AC scheme mirroring luma does not survive a real photo). Independent
+  // DCT-AC scheme mirroring luma does not survive a real photo). Applied as
+  // a uniform additive shift, not a flat overwrite: shifting preserves each
+  // block's own natural chroma texture, where overwriting replaces it with
+  // a flat colour swatch -- invisible-looking on a synthetic test pattern,
+  // glaringly visible on a real photo as a mosaic of flat patches. Independent
   // of the luma pass above -- adding an equal delta to R,G,B (how the luma
   // pass writes pixels) cancels out in Cb=B-Y, Cr=R-Y, so Cb/Cr are still
   // exactly the original values at this point. No texture-adaptive step size
@@ -584,11 +618,12 @@ export async function embedQim(
     const touchedSuperblocks = new Set<string>();
 
     for (let i = 0; i < chromaBits.length; i++) {
-      const { channel, sbRow, sbCol } = chromaStream[i];
+      const physicalIdx = interleavedPhysicalIndex(i, chromaStream.length, repeat);
+      const { channel, sbRow, sbCol } = chromaStream[physicalIdx];
       const plane = planes[channel];
       const current = readChromaSuperblockScalar(plane, width, sbRow, sbCol);
       const target = qimEmbed(current, chromaBits[i], chromaDelta!);
-      writeChromaSuperblockScalar(plane, width, sbRow, sbCol, target);
+      shiftChromaSuperblock(plane, width, sbRow, sbCol, target - current);
       touchedSuperblocks.add(`${sbRow},${sbCol}`);
     }
 
@@ -667,6 +702,14 @@ export async function detectQim(
 
     const rawBits: number[] = [];
     const margins: number[] = [];
+    // Delta actually used to extract each raw bit (chromaDelta for chroma
+    // bits, the per-block adaptive luma delta for luma bits). The erasure
+    // threshold below must scale with this -- a fixed constant calibrated
+    // for one delta silently stops working at another (see §12.4: a fixed
+    // QIM_DELTA=14-derived margin missed real corruption at chromaDelta=28,
+    // leaving RS to blind-correct without erasure hints and run out of
+    // parity margin).
+    const bitDelta: number[] = [];
 
     // Chroma bits come first in the combined stream (matching embedQim), so
     // extract them before luma. Scalar-per-block scheme (§11 second
@@ -679,11 +722,23 @@ export async function detectQim(
       const { cb: cbPlane, cr: crPlane } = extractChromaPlanes(pixels, width, height);
       const planes: Record<"cb" | "cr", Float64Array> = { cb: cbPlane, cr: crPlane };
 
+      // Extract in physical (spatial block) order first...
+      const physicalBits: number[] = [];
+      const physicalMargins: number[] = [];
       for (const { channel, sbRow, sbCol } of chromaStream) {
         const value = readChromaSuperblockScalar(planes[channel], width, sbRow, sbCol);
         const [bit, margin] = qimDetectWithMargin(value, chromaDelta!);
-        rawBits.push(bit);
-        margins.push(margin);
+        physicalBits.push(bit);
+        physicalMargins.push(margin);
+      }
+      // ...then gather into logical order (undoing embedQim's interleave),
+      // so majority voting sees repeat-copies of one logical bit consecutive,
+      // exactly as it expects.
+      for (let i = 0; i < chromaStream.length; i++) {
+        const physicalIdx = interleavedPhysicalIndex(i, chromaStream.length, repeat);
+        rawBits.push(physicalBits[physicalIdx]);
+        margins.push(physicalMargins[physicalIdx]);
+        bitDelta.push(chromaDelta!);
       }
     }
 
@@ -711,23 +766,29 @@ export async function detectQim(
       const [bit, margin] = qimDetectWithMargin(c, blockDelta);
       rawBits.push(bit);
       margins.push(margin);
+      bitDelta.push(blockDelta);
     }
 
     // Step 4: Majority voting
     const bits = majorityBits(rawBits, repeat);
 
-    // Compute grouped margins for erasure detection
+    // Compute grouped margins (and the delta scale they were measured
+    // against) for erasure detection.
     let groupedMargins: number[];
+    let groupedDelta: number[];
     if (repeat > 1) {
       groupedMargins = [];
+      groupedDelta = [];
       for (let i = 0; i < margins.length; i += repeat) {
         const chunk = margins.slice(i, i + repeat);
         if (chunk.length === repeat) {
           groupedMargins.push(chunk.reduce((a, b) => a + b, 0) / repeat);
+          groupedDelta.push(Math.min(...bitDelta.slice(i, i + repeat)));
         }
       }
     } else {
       groupedMargins = margins;
+      groupedDelta = bitDelta;
     }
 
     // Step 5: Parse codeword length header (first 16 bits)
@@ -741,23 +802,29 @@ export async function detectQim(
     const allBytes = fromBits(bits.slice(0, totalBits));
     const codeword = allBytes.slice(2, 2 + codewordLen);
 
-    // Step 6: Mark low-confidence bytes as erasures
+    // Step 6: Mark low-confidence bytes as erasures. Threshold scales with
+    // the delta actually used for each byte's bits (delta/6, the same ratio
+    // QIM_ERASURE_MARGIN used at the original QIM_DELTA=14) rather than a
+    // fixed constant -- see bitDelta/groupedDelta above for why a fixed
+    // threshold silently stops working once any other delta is in play.
     const erasures: number[] = [];
     const byteMargins: number[] = [];
+    const byteDelta: number[] = [];
     const bitsUsed = bits.slice(0, totalBits);
     for (let i = 0; i < Math.floor(bitsUsed.length / 8); i++) {
       const start = i * 8;
       const end = start + 8;
       if (end > groupedMargins.length) break;
       byteMargins.push(Math.min(...groupedMargins.slice(start, end)));
+      byteDelta.push(Math.min(...groupedDelta.slice(start, end)));
     }
     // Erasure positions relative to the codeword (skip the 2-byte length prefix)
     for (let idx = 0; idx < Math.min(byteMargins.length - 2, codewordLen); idx++) {
-      if (byteMargins[idx + 2] < QIM_ERASURE_MARGIN) {
+      const erasureMargin = Math.max(1, byteDelta[idx + 2] / 6);
+      if (byteMargins[idx + 2] < erasureMargin) {
         erasures.push(idx);
       }
     }
-
     // Step 7: RS decode
     const rs = new RSCodec(rsNsym);
     let decoded: Uint8Array;
@@ -878,13 +945,17 @@ export async function encodeQimImageFile(
   // Step size comes from the target platform unless the caller overrides it.
   // Without this the profiles are decorative: embedQim would silently keep
   // using QIM_DELTA, which probing shows does not survive recompression.
-  // chromaDelta/chromaChannels come from the same profile -- most profiles
-  // leave them undefined, which keeps chroma embedding off (§10.4).
+  // chromaDelta/chromaChannels/rsNsym come from the same profile -- most
+  // profiles leave chromaDelta undefined, which keeps chroma embedding off
+  // (§10.4). rsNsym matters specifically for chroma-capacity profiles: RS
+  // parity is a per-chunk cost, and the QIM default (128) can consume most
+  // of chroma's small budget on redundancy for a small payload (§12.4).
   const prof = options?.platform ? profileFor(options.platform) : undefined;
   const delta = options?.delta ?? prof?.delta;
   const chromaDelta = options?.chromaDelta ?? prof?.chromaDelta;
   const chromaChannels = options?.chromaChannels ?? prof?.chromaChannels;
-  const result = await embedQim(jpegBytes, payload, { ...options, delta, chromaDelta, chromaChannels });
+  const rsNsym = options?.rsNsym ?? prof?.rsNsym;
+  const result = await embedQim(jpegBytes, payload, { ...options, delta, chromaDelta, chromaChannels, rsNsym });
   return new Blob([result], { type: "image/jpeg" });
 }
 
@@ -910,12 +981,13 @@ export async function decodeQimImageFile(
       // Phase 1: chroma-capable profiles. A chroma-embedded image is NOT
       // decodable by a luma-only guess -- the chroma bits carry the
       // magic/length header (§10.4), so a luma-only read starts mid-stream
-      // and fails. Try whole {delta, chromaDelta, chromaChannels} bundles
-      // from the small set of profiles that actually enable chroma.
+      // and fails. Try whole {delta, chromaDelta, chromaChannels, rsNsym}
+      // bundles from the small set of profiles that actually enable chroma.
       const chromaCandidates = Object.values(PLATFORM_PROFILES).filter((p) => p.chromaDelta !== undefined);
       for (const prof of chromaCandidates) {
         result = await detectQim(jpegBytes, {
-          ...options, delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
+          ...options, delta: prof.delta, chromaDelta: prof.chromaDelta,
+          chromaChannels: prof.chromaChannels, rsNsym: prof.rsNsym,
         });
         if (result && result.length > 0) break;
       }
@@ -1060,6 +1132,7 @@ export async function getQimCapacityForFile(
   const capacityBytes = getQimCapacityBytes(w, h, {
     chromaDelta: prof.chromaDelta,
     chromaChannels: prof.chromaChannels,
+    rsNsym: prof.rsNsym,
   });
   return { capacityBytes, width: w, height: h };
 }

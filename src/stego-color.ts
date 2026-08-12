@@ -99,22 +99,34 @@ export function readChromaSuperblockScalar(
 }
 
 /**
- * Write a single scalar value across an entire 16x16 super-block, flat and
- * uniform. This is what makes the result invariant to the encoder's actual
- * subsampling filter -- see module doc.
+ * Shift every pixel in a 16x16 super-block by a constant amount, clamped to
+ * [0,255], preserving whatever natural chroma texture the block already had.
+ *
+ * An earlier version of this replaced the whole block with one flat value
+ * (writeChromaSuperblockScalar, since removed). That survives the encoder's
+ * subsampling for the same reason a flat 2x2 tile does, but it also erases
+ * every touched block's real local colour variation -- invisible on a
+ * synthetic sine-wave test pattern with little fine chroma detail, glaringly
+ * visible on a real photograph as a mosaic of flat-coloured patches
+ * replacing natural texture. A uniform additive shift keeps the same
+ * subsampling-invariance property (any 2x2 group's average shifts by
+ * exactly `shift`, regardless of the encoder's filter) while leaving the
+ * block's own texture intact, so what a viewer sees is a subtle colour cast
+ * over real detail rather than a flat colour swatch.
  */
-export function writeChromaSuperblockScalar(
+export function shiftChromaSuperblock(
   plane: Float64Array,
   planeWidth: number,
   sbRow: number,
   sbCol: number,
-  value: number,
+  shift: number,
 ): void {
   const startY = sbRow * SUPERBLOCK;
   const startX = sbCol * SUPERBLOCK;
   for (let r = 0; r < SUPERBLOCK; r++) {
     for (let c = 0; c < SUPERBLOCK; c++) {
-      plane[(startY + r) * planeWidth + (startX + c)] = value;
+      const idx = (startY + r) * planeWidth + (startX + c);
+      plane[idx] = Math.max(0, Math.min(255, plane[idx] + shift));
     }
   }
 }
