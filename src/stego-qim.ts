@@ -32,6 +32,10 @@ import {
   PLATFORM_PROFILES, DETECT_DELTAS, profileFor,
   blockActivity, deltaForBlock, LADDER_MEAN,
 } from "./stego-adaptive";
+import {
+  ycbcrToRgb, extractChromaPlanes,
+  downsampleChromaSuperblock, upsampleChromaSuperblock, CHROMA_SUPERBLOCK_PX,
+} from "./stego-color";
 
 /**
  * Coefficients used to gauge local texture: zigzag 25-40, i.e. ABOVE the
@@ -97,6 +101,15 @@ export interface QimOptions {
    * identical payload. Default true.
    */
   adaptive?: boolean;
+  /**
+   * QIM step for chroma-channel embedding (§10.4 in HANDOFF.md). Undefined
+   * (default) means chroma embedding is off -- luma-only, identical to
+   * pre-chroma behaviour. Chroma bits are filled before any luma slot, so a
+   * payload that fits in chroma capacity needs zero luma modifications.
+   */
+  chromaDelta?: number;
+  /** Which chroma channels to embed in. Only meaningful with chromaDelta set. */
+  chromaChannels?: Array<"cb" | "cr">;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +231,38 @@ function buildCoeffStream(blocksY: number, blocksX: number): CoeffPosition[] {
  */
 function zigzagIndexTo2d(zi: number): [number, number] {
   return ZIGZAG_2D[AC_INDICES[zi]];
+}
+
+// ---------------------------------------------------------------------------
+// Chroma coefficient stream: one chroma DCT block = one 16x16 super-block
+// (the real encoder subsamples chroma 2x2 before its own DCT -- see
+// stego-color.ts module doc). Channel-major, then AC-major within a channel,
+// so a small payload lands entirely in the first channel's low AC positions.
+// ---------------------------------------------------------------------------
+
+interface ChromaCoeffPosition {
+  channel: "cb" | "cr";
+  sbRow: number;
+  sbCol: number;
+  zigzagIdx: number;
+}
+
+function buildChromaCoeffStream(
+  superBlocksY: number,
+  superBlocksX: number,
+  channels: Array<"cb" | "cr">,
+): ChromaCoeffPosition[] {
+  const stream: ChromaCoeffPosition[] = [];
+  for (const channel of channels) {
+    for (let zi = 0; zi < AC_INDICES.length; zi++) {
+      for (let sbRow = 0; sbRow < superBlocksY; sbRow++) {
+        for (let sbCol = 0; sbCol < superBlocksX; sbCol++) {
+          stream.push({ channel, sbRow, sbCol, zigzagIdx: zi });
+        }
+      }
+    }
+  }
+  return stream;
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +427,9 @@ export async function embedQim(
   const rsNsym = options?.rsNsym ?? QIM_RS_NSYM;
   const compress = options?.compress ?? true;
   const adaptive = options?.adaptive ?? true;
+  const chromaDelta = options?.chromaDelta;
+  const chromaChannels = options?.chromaChannels ?? [];
+  const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
 
   // Step 1: Decode JPEG to pixel data
   const { data: pixels, width, height } = await decodeJpegToPixels(imageData);
@@ -419,11 +467,26 @@ export async function embedQim(
   const blocksX = Math.floor(width / 8);
   const stream = buildCoeffStream(blocksY, blocksX);
 
-  if (bits.length > stream.length) {
+  // Chroma slots are filled before any luma slot (see stego-color.ts and
+  // §10.4 in HANDOFF.md): chroma perturbation is far less visible than luma,
+  // so a payload that fits entirely in chroma capacity needs zero luma
+  // modifications instead of just fewer.
+  const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);
+  const superBlocksX = Math.floor(width / CHROMA_SUPERBLOCK_PX);
+  const chromaStream = chromaEnabled
+    ? buildChromaCoeffStream(superBlocksY, superBlocksX, chromaChannels)
+    : [];
+
+  const totalCapacity = chromaStream.length + stream.length;
+  if (bits.length > totalCapacity) {
     throw new Error(
-      `Payload too large: need ${bits.length} bits, have ${stream.length} AC coefficients available`,
+      `Payload too large: need ${bits.length} bits, have ${totalCapacity} AC coefficients available`,
     );
   }
+
+  const chromaBitCount = Math.min(bits.length, chromaStream.length);
+  const chromaBits = bits.slice(0, chromaBitCount);
+  const lumaBits = bits.slice(chromaBitCount);
 
   // Get quantization table for the target quality
   const qt = quantizationTable(quality);
@@ -435,7 +498,7 @@ export async function embedQim(
   // Process each 8x8 block that has bits to embed
   // Track which blocks need modification
   const modifiedBlocks = new Set<string>();
-  for (let i = 0; i < bits.length; i++) {
+  for (let i = 0; i < lumaBits.length; i++) {
     const key = `${stream[i].blockRow},${stream[i].blockCol}`;
     modifiedBlocks.add(key);
   }
@@ -467,12 +530,12 @@ export async function embedQim(
     for (let zi = 0; zi < AC_INDICES.length; zi++) {
       // AC-major ordering: stream index = zi * (blocksY * blocksX) + br * blocksX + bc
       const streamIdx = zi * blocksPerPlane + br * blocksX + bc;
-      if (streamIdx >= bits.length) continue;
+      if (streamIdx >= lumaBits.length) continue;
 
       const [dy, dx] = zigzagIndexTo2d(zi);
       const coeffIdx = dy * 8 + dx;
       const c = qCoeffs[coeffIdx];
-      const newC = qimEmbed(c, bits[streamIdx], blockDelta);
+      const newC = qimEmbed(c, lumaBits[streamIdx], blockDelta);
       if (newC !== c) {
         qCoeffs[coeffIdx] = newC;
         modified = true;
@@ -502,6 +565,89 @@ export async function embedQim(
           outPixels[px] = Math.max(0, Math.min(255, Math.round(origR + yDiff)));
           outPixels[px + 1] = Math.max(0, Math.min(255, Math.round(origG + yDiff)));
           outPixels[px + 2] = Math.max(0, Math.min(255, Math.round(origB + yDiff)));
+        }
+      }
+    }
+  }
+
+  // Step 7 (chroma): embed chromaBits into Cb/Cr. Independent of the luma
+  // pass above -- adding an equal delta to R,G,B (how the luma pass writes
+  // pixels) cancels out in Cb=B-Y, Cr=R-Y, so Cb/Cr are still exactly the
+  // original values at this point.
+  if (chromaEnabled && chromaBits.length > 0) {
+    const { cb: cbPlane, cr: crPlane } = extractChromaPlanes(pixels, width, height);
+    const planes: Record<"cb" | "cr", Float64Array> = { cb: cbPlane, cr: crPlane };
+    const qtChroma = quantizationTable(quality, "chroma");
+    const superBlocksPerPlane = superBlocksY * superBlocksX;
+
+    // Which (channel, sbRow, sbCol) super-blocks carry at least one bit.
+    const modifiedChroma = new Map<string, { channel: "cb" | "cr"; sbRow: number; sbCol: number }>();
+    for (let i = 0; i < chromaBits.length; i++) {
+      const p = chromaStream[i];
+      modifiedChroma.set(`${p.channel},${p.sbRow},${p.sbCol}`, p);
+    }
+
+    for (const { channel, sbRow, sbCol } of modifiedChroma.values()) {
+      const plane = planes[channel];
+      const channelOffset = chromaChannels.indexOf(channel) * AC_INDICES.length * superBlocksPerPlane;
+
+      const rawBlock = downsampleChromaSuperblock(plane, width, sbRow, sbCol);
+      const shifted = new Float64Array(64);
+      for (let i = 0; i < 64; i++) shifted[i] = rawBlock[i] - 128;
+      const dctCoeffs = forwardDCT8x8(shifted);
+      const qCoeffs = quantize(dctCoeffs, qtChroma);
+
+      const blockDelta = adaptive
+        ? deltaForBlock(chromaDelta!, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
+        : chromaDelta!;
+
+      let modified = false;
+      for (let zi = 0; zi < AC_INDICES.length; zi++) {
+        const streamIdx = channelOffset + zi * superBlocksPerPlane + sbRow * superBlocksX + sbCol;
+        if (streamIdx >= chromaBits.length) continue;
+
+        const [dy, dx] = zigzagIndexTo2d(zi);
+        const coeffIdx = dy * 8 + dx;
+        const c = qCoeffs[coeffIdx];
+        const newC = qimEmbed(c, chromaBits[streamIdx], blockDelta);
+        if (newC !== c) {
+          qCoeffs[coeffIdx] = newC;
+          modified = true;
+        }
+      }
+
+      if (modified) {
+        const dequantCoeffs = dequantize(qCoeffs, qtChroma);
+        const spatialBlock = inverseDCT8x8(dequantCoeffs);
+        const resultBlock = new Float64Array(64);
+        for (let i = 0; i < 64; i++) resultBlock[i] = spatialBlock[i] + 128;
+        upsampleChromaSuperblock(plane, width, sbRow, sbCol, resultBlock);
+      }
+    }
+
+    // Recompose RGB for pixels in every touched super-block, preserving
+    // whatever Y the luma pass already wrote and combining it with the
+    // (possibly QIM-modified) Cb/Cr.
+    const touchedSuperblocks = new Set<string>();
+    for (const { sbRow, sbCol } of modifiedChroma.values()) touchedSuperblocks.add(`${sbRow},${sbCol}`);
+    for (const key of touchedSuperblocks) {
+      const [sbRow, sbCol] = key.split(",").map(Number);
+      const startY = sbRow * CHROMA_SUPERBLOCK_PX;
+      const startX = sbCol * CHROMA_SUPERBLOCK_PX;
+      for (let r = 0; r < CHROMA_SUPERBLOCK_PX; r++) {
+        for (let c = 0; c < CHROMA_SUPERBLOCK_PX; c++) {
+          const py = startY + r;
+          const pxCol = startX + c;
+          const pIdx = py * width + pxCol;
+          const px = py * stride + pxCol * 4;
+          const origR = outPixels[px];
+          const origG = outPixels[px + 1];
+          const origB = outPixels[px + 2];
+          const currentY = rgbToY(origR, origG, origB);
+          const [newR, newG, newB] = ycbcrToRgb(currentY, cbPlane[pIdx], crPlane[pIdx]);
+          outPixels[px] = Math.max(0, Math.min(255, Math.round(newR)));
+          outPixels[px + 1] = Math.max(0, Math.min(255, Math.round(newG)));
+          outPixels[px + 2] = Math.max(0, Math.min(255, Math.round(newB)));
         }
       }
     }
@@ -538,6 +684,9 @@ export async function detectQim(
   const compress = options?.compress ?? true;
   const quality = options?.quality ?? QIM_EMBED_QUALITY;
   const adaptive = options?.adaptive ?? true;
+  const chromaDelta = options?.chromaDelta;
+  const chromaChannels = options?.chromaChannels ?? [];
+  const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
 
   try {
     // Step 1: Decode JPEG to pixel data
@@ -553,6 +702,44 @@ export async function detectQim(
 
     const rawBits: number[] = [];
     const margins: number[] = [];
+
+    // Chroma bits come first in the combined stream (matching embedQim), so
+    // extract them before luma.
+    if (chromaEnabled) {
+      const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);
+      const superBlocksX = Math.floor(width / CHROMA_SUPERBLOCK_PX);
+      const chromaStream = buildChromaCoeffStream(superBlocksY, superBlocksX, chromaChannels);
+      const { cb: cbPlane, cr: crPlane } = extractChromaPlanes(pixels, width, height);
+      const planes: Record<"cb" | "cr", Float64Array> = { cb: cbPlane, cr: crPlane };
+      const qtChroma = quantizationTable(quality, "chroma");
+
+      const chromaDctCache = new Map<string, Float64Array>();
+      const chromaDeltaCache = new Map<string, number>();
+
+      for (const { channel, sbRow, sbCol, zigzagIdx } of chromaStream) {
+        const key = `${channel},${sbRow},${sbCol}`;
+        let qCoeffs = chromaDctCache.get(key);
+        if (!qCoeffs) {
+          const rawBlock = downsampleChromaSuperblock(planes[channel], width, sbRow, sbCol);
+          const shifted = new Float64Array(64);
+          for (let i = 0; i < 64; i++) shifted[i] = rawBlock[i] - 128;
+          const dctCoeffs = forwardDCT8x8(shifted);
+          qCoeffs = quantize(dctCoeffs, qtChroma);
+          chromaDctCache.set(key, qCoeffs);
+          chromaDeltaCache.set(key, adaptive
+            ? deltaForBlock(chromaDelta!, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
+            : chromaDelta!);
+        }
+        const blockDelta = chromaDeltaCache.get(key) ?? chromaDelta!;
+
+        const [dy, dx] = zigzagIndexTo2d(zigzagIdx);
+        const coeffIdx = dy * 8 + dx;
+        const c = qCoeffs[coeffIdx];
+        const [bit, margin] = qimDetectWithMargin(c, blockDelta);
+        rawBits.push(bit);
+        margins.push(margin);
+      }
+    }
 
     // Cache DCT coefficients per block
     const blockDctCache = new Map<string, Float64Array>();
@@ -686,7 +873,17 @@ export function getQimCapacityBytes(
 
   const blocksY = Math.floor(height / 8);
   const blocksX = Math.floor(width / 8);
-  const totalCoeffs = blocksY * blocksX * AC_INDICES.length;
+  let totalCoeffs = blocksY * blocksX * AC_INDICES.length;
+
+  // Mirrors embedQim exactly: chroma slots (§10.4) add to total capacity
+  // whenever the profile enables them.
+  const chromaChannels = options?.chromaChannels ?? [];
+  if (options?.chromaDelta !== undefined && chromaChannels.length > 0) {
+    const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);
+    const superBlocksX = Math.floor(width / CHROMA_SUPERBLOCK_PX);
+    totalCoeffs += superBlocksY * superBlocksX * AC_INDICES.length * chromaChannels.length;
+  }
+
   const totalBitsAvailable = Math.floor(totalCoeffs / repeat);
   const totalBytesAvailable = Math.floor(totalBitsAvailable / 8);
 
@@ -707,10 +904,13 @@ export async function encodeQimImageFile(
   // Step size comes from the target platform unless the caller overrides it.
   // Without this the profiles are decorative: embedQim would silently keep
   // using QIM_DELTA, which probing shows does not survive recompression.
-  const delta = options?.delta ?? (options?.platform
-    ? profileFor(options.platform).delta
-    : undefined);
-  const result = await embedQim(jpegBytes, payload, { ...options, delta });
+  // chromaDelta/chromaChannels come from the same profile -- most profiles
+  // leave them undefined, which keeps chroma embedding off (§10.4).
+  const prof = options?.platform ? profileFor(options.platform) : undefined;
+  const delta = options?.delta ?? prof?.delta;
+  const chromaDelta = options?.chromaDelta ?? prof?.chromaDelta;
+  const chromaChannels = options?.chromaChannels ?? prof?.chromaChannels;
+  const result = await embedQim(jpegBytes, payload, { ...options, delta, chromaDelta, chromaChannels });
   return new Blob([result], { type: "image/jpeg" });
 }
 
@@ -730,10 +930,29 @@ export async function decodeQimImageFile(
     // returning plausible garbage -- which makes trying a short list safe, and
     // far better than guessing one value. The caller can still pin a delta.
     let result: Uint8Array | null = null;
-    const candidates = options?.delta !== undefined ? [options.delta] : DETECT_DELTAS;
-    for (const delta of candidates) {
-      result = await detectQim(jpegBytes, { ...options, delta });
-      if (result && result.length > 0) break;
+    if (options?.delta !== undefined) {
+      result = await detectQim(jpegBytes, options);
+    } else {
+      // Phase 1: chroma-capable profiles. A chroma-embedded image is NOT
+      // decodable by a luma-only guess -- the chroma bits carry the
+      // magic/length header (§10.4), so a luma-only read starts mid-stream
+      // and fails. Try whole {delta, chromaDelta, chromaChannels} bundles
+      // from the small set of profiles that actually enable chroma.
+      const chromaCandidates = Object.values(PLATFORM_PROFILES).filter((p) => p.chromaDelta !== undefined);
+      for (const prof of chromaCandidates) {
+        result = await detectQim(jpegBytes, {
+          ...options, delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
+        });
+        if (result && result.length > 0) break;
+      }
+      // Phase 2: plain luma-only sweep, chroma disabled -- backward
+      // compatible with images made before this change and other platforms.
+      if (!result || result.length === 0) {
+        for (const delta of DETECT_DELTAS) {
+          result = await detectQim(jpegBytes, { ...options, delta });
+          if (result && result.length > 0) break;
+        }
+      }
     }
     if (!result || result.length === 0) {
       return { ok: false, error: "No QIM payload found" };
@@ -855,15 +1074,20 @@ export async function getQimCapacityForFile(
   coverFile: File,
   platform?: string,
 ): Promise<{ capacityBytes: number; width: number; height: number }> {
-  const targetWidth =
-    PLATFORM_WIDTHS[platform ?? DEFAULT_PLATFORM] ??
-    PLATFORM_WIDTHS[DEFAULT_PLATFORM];
-  const resized = await resizeCoverForPlatform(coverFile, targetWidth);
+  // Must mirror the embed path exactly, square flag included: a capacity
+  // computed on a non-square cover is wrong for Instagram, whose profile
+  // centre-crops to 1:1 before embedding.
+  const prof = profileFor(platform ?? DEFAULT_PLATFORM);
+  const resized = await resizeCoverForPlatform(coverFile, prof.width, prof.square);
   const bitmap = await createImageBitmap(resized);
   const w = bitmap.width;
   const h = bitmap.height;
   bitmap.close();
-  return { capacityBytes: getQimCapacityBytes(w, h), width: w, height: h };
+  const capacityBytes = getQimCapacityBytes(w, h, {
+    chromaDelta: prof.chromaDelta,
+    chromaChannels: prof.chromaChannels,
+  });
+  return { capacityBytes, width: w, height: h };
 }
 
 /**

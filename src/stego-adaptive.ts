@@ -56,6 +56,16 @@ export interface PlatformProfile {
   delta: number;
   /** Human-readable note shown in the UI. */
   note: string;
+  /**
+   * QIM step size for chroma-channel embedding (§10.4). Undefined means
+   * chroma embedding is off for this profile -- luma-only, unchanged
+   * behaviour. Chroma bits are invisible at a much smaller step than luma
+   * needs to survive Instagram's sharpening, so payloads that fit in chroma
+   * capacity need zero luma modifications.
+   */
+  chromaDelta?: number;
+  /** Which chroma channels to embed in, when chromaDelta is set. */
+  chromaChannels?: Array<"cb" | "cr">;
 }
 
 /**
@@ -83,8 +93,10 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     note: "Caps around 1920px. Measured 0.25-0.53% BER at 1600.",
   },
   instagram: {
-    width: 1440, square: true, delta: 28,
-    note: "Normalises to 1440x1440 square. Must upload already-square at 1440.",
+    width: 1440, square: true, delta: 56,
+    chromaDelta: 28, chromaChannels: ["cb", "cr"],
+    note: "1440x1440 square, larger step. Instagram sharpens; 28 and 40 did not survive, 56 did. "
+      + "Chroma channel carries payload first (invisible), luma only for overflow -- §10.4, unbracketed on a real device yet.",
   },
   facebook: {
     width: 2048, square: false, delta: 28,
@@ -98,10 +110,61 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     width: 1280, square: false, delta: 28,
     note: "Conservative 1280px target.",
   },
-  /** Safe everywhere: square at 1440 survives all four measured platforms. */
+  // Experiment profiles: identical to `instagram` except for step size, so a
+  // real-platform bracket can be run from the UI without code changes.
+  instagram_d44: {
+    width: 1440, square: true, delta: 44,
+    note: "Bracketing: threshold lies in (40, 56].",
+  },
+  instagram_d48: {
+    width: 1440, square: true, delta: 48,
+    note: "Bracketing: threshold lies in (40, 56].",
+  },
+  instagram_d52: {
+    width: 1440, square: true, delta: 52,
+    note: "Bracketing: threshold lies in (40, 56].",
+  },
+  instagram_d40: {
+    width: 1440, square: true, delta: 40,
+    note: "Instagram geometry, larger step. For bracketing survival.",
+  },
+  instagram_d56: {
+    width: 1440, square: true, delta: 56,
+    note: "Instagram geometry, larger step still.",
+  },
+  instagram_d72: {
+    width: 1440, square: true, delta: 72,
+    note: "Instagram geometry, largest step. Expect visible artifacts.",
+  },
+  // Chroma bracket ladder (§10.4): luma delta fixed at the already-validated
+  // 56, only chromaDelta varies, exactly mirroring how the instagram_d*
+  // luma bracket isolated one unknown at a time. Real-device bracketing not
+  // yet done -- these exist so it can be run from the UI without code changes.
+  instagram_chroma_d28: {
+    width: 1440, square: true, delta: 56,
+    chromaDelta: 28, chromaChannels: ["cb", "cr"],
+    note: "Chroma bracketing: step 28. Luma fixed at 56.",
+  },
+  instagram_chroma_d40: {
+    width: 1440, square: true, delta: 56,
+    chromaDelta: 40, chromaChannels: ["cb", "cr"],
+    note: "Chroma bracketing: step 40. Luma fixed at 56.",
+  },
+  instagram_chroma_d56: {
+    width: 1440, square: true, delta: 56,
+    chromaDelta: 56, chromaChannels: ["cb", "cr"],
+    note: "Chroma bracketing: step 56. Luma fixed at 56.",
+  },
+  /**
+   * Safe everywhere: 1440 square clears WhatsApp's 1600 cap and Telegram's
+   * 1920, and matches Instagram's canvas exactly. Step size is Instagram's,
+   * because Instagram is the harshest of the three -- a step that survives it
+   * survives the others with room to spare.
+   */
   universal: {
-    width: 1440, square: true, delta: 28,
-    note: "Square 1440 survives WhatsApp, Telegram and Instagram alike.",
+    width: 1440, square: true, delta: 56,
+    chromaDelta: 28, chromaChannels: ["cb", "cr"],
+    note: "Square 1440 at Instagram's step size. Survives WhatsApp, Telegram and Instagram.",
   },
   none: {
     width: 0, square: false, delta: 20,
@@ -120,7 +183,43 @@ export const DEFAULT_PLATFORM = "whatsapp_standard";
  * cheaper than being wrong. 14 is retained so images produced by earlier
  * versions still open.
  */
-export const DETECT_DELTAS: readonly number[] = [28, 24, 20, 14, 36];
+// Ordered by how likely each is in the wild: 56 is now the Instagram and
+// universal default, 28 the WhatsApp/Telegram default, 14 upstream's original.
+export const DETECT_DELTAS: readonly number[] = [56, 28, 52, 48, 44, 40, 72, 24, 20, 14, 36];
+
+/**
+ * Instagram-only step-size candidates, for bracketing by experiment.
+ *
+ * Geometry is solved: uploading an already-square 1440x1440 image means
+ * Instagram does not resample and the 8x8 grid survives intact (verified on a
+ * real account -- 1440 in, 1440 out). What remains is amplitude. Instagram
+ * sharpens after processing, which perturbs exactly the mid-frequency
+ * coefficients QIM writes to, and delta=28 was not enough to ride over it.
+ *
+ * Sharpening cannot be reproduced in CI -- the simulator only resizes and
+ * re-encodes -- so the value has to come from real posts, the same way the
+ * WhatsApp threshold did.
+ */
+export const INSTAGRAM_DELTA_CANDIDATES: readonly number[] = [28, 40, 56, 72];
+
+/**
+ * Measured on real Instagram, August 2026, 1440x1440 square uploads:
+ *
+ *   delta 28  FAIL      delta 40  FAIL      delta 56  PASS      delta 72  PASS
+ *
+ * The threshold sits between 40 and 56, so Instagram needs roughly TWICE
+ * WhatsApp's step (26) despite having far gentler quantization (steps 5-25 vs
+ * 6-167). Quantization was never the damage: Instagram sharpens after
+ * processing, which perturbs exactly the mid-frequency coefficients QIM writes
+ * to, and sharpening does not care how coarse the quantizer is.
+ *
+ * At 56 the embedding is visible on close inspection as a uniform grain rather
+ * than localised dotting -- adaptive placement spreads energy into texture
+ * instead of concentrating it in flat regions, so what remains reads as sensor
+ * noise or JPEG artefacting. That clears "undetectable through normal viewing
+ * or casual inspection"; it would not clear statistical steganalysis. Anyone
+ * needing that should use a smaller payload rather than a smaller step.
+ */
 
 export function profileFor(platform: string): PlatformProfile {
   return PLATFORM_PROFILES[platform] ?? PLATFORM_PROFILES[DEFAULT_PLATFORM];

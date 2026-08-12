@@ -14,10 +14,18 @@ describe("measured platform profiles", () => {
     expect(p.square).toBe(true);
   });
 
-  it("only instagram forces a square canvas", () => {
-    const squares = Object.entries(PLATFORM_PROFILES)
-      .filter(([, p]) => p.square).map(([k]) => k).sort();
-    expect(squares).toEqual(["instagram", "universal"]);
+  it("square profiles are exactly those targeting Instagram's canvas", () => {
+    // Instagram normalises every upload to 1440x1440. Any profile that wants
+    // to survive it must supply an already-square image at that size; nothing
+    // else should force a crop.
+    for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
+      if (p.square) {
+        expect(p.width).toBe(1440);
+        expect(name === "universal" || name.startsWith("instagram")).toBe(true);
+      } else {
+        expect(name.startsWith("instagram")).toBe(false);
+      }
+    }
   });
 
   it("every lossy profile clears the measured survival threshold", () => {
@@ -44,6 +52,39 @@ describe("measured platform profiles", () => {
     expect(u.width).toBe(1440);
     expect(u.width).toBeLessThanOrEqual(PLATFORM_PROFILES.whatsapp_standard.width);
     expect(u.square).toBe(true);
+  });
+});
+
+describe("chroma-channel bracket profiles (§10.4)", () => {
+  it("chroma-enabled profiles keep luma fixed at the already-validated 56", () => {
+    // Only chromaDelta should vary across the bracket ladder -- isolating
+    // the one open question, same discipline as the instagram_d* luma
+    // bracket that settled on 56.
+    for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
+      if (p.chromaDelta !== undefined) {
+        expect(p.delta).toBe(56);
+        expect(name === "universal" || name.startsWith("instagram")).toBe(true);
+      }
+    }
+  });
+
+  it("bracket ladder isolates chromaDelta and nothing else", () => {
+    const d28 = PLATFORM_PROFILES.instagram_chroma_d28;
+    const d40 = PLATFORM_PROFILES.instagram_chroma_d40;
+    const d56 = PLATFORM_PROFILES.instagram_chroma_d56;
+    expect([d28.width, d40.width, d56.width]).toEqual([1440, 1440, 1440]);
+    expect([d28.square, d40.square, d56.square]).toEqual([true, true, true]);
+    expect([d28.chromaDelta, d40.chromaDelta, d56.chromaDelta]).toEqual([28, 40, 56]);
+  });
+
+  it("chromaChannels is only set alongside chromaDelta", () => {
+    for (const p of Object.values(PLATFORM_PROFILES)) {
+      if (p.chromaDelta === undefined) {
+        expect(p.chromaChannels).toBeUndefined();
+      } else {
+        expect(p.chromaChannels?.length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

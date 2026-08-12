@@ -1,22 +1,36 @@
 import { useState, useEffect } from "react";
 import * as Nostr from "./nostr-stub";
 import { isWeb, pickImageFile } from "./platform-web";
-import { PLATFORM_WIDTHS, getQimCapacityForFile } from "./stego-qim";
+import { getQimCapacityForFile } from "./stego-qim";
+import { PLATFORM_PROFILES, profileFor } from "./stego-adaptive";
 import { getDotCapacityForFile } from "./stego-dot-web";
 import type { ProfileData } from "./types";
 
 export type StegoMethod = "qim" | "dot";
 
+// Labels state the geometry actually used. The previous values were wrong in
+// two places that mattered: Instagram was labelled 1080px (Instagram upscales
+// that to its 1440 canvas, destroying the payload) and WhatsApp HD 4096px
+// (downscaled to 1600, same result).
 const PLATFORM_LABELS: Record<string, string> = {
-  universal: "Universal — 1440x1440 square (recommended)",
   whatsapp_standard: "WhatsApp (1600px)",
   whatsapp_hd: "WhatsApp HD (1600px)",
   telegram_photo: "Telegram (1600px)",
-  instagram: "Instagram (1440x1440 square)",
+  instagram: "Instagram (1440 square)",
   facebook: "Facebook (2048px)",
   twitter: "Twitter/X (1600px)",
   imessage: "iMessage (1280px)",
-  none: "No resize (lossless channels only)",
+  universal: "Universal (1440 square, safe everywhere)",
+  instagram_d40: "Instagram test - step 40",
+  instagram_d44: "Instagram test - step 44",
+  instagram_d48: "Instagram test - step 48",
+  instagram_d52: "Instagram test - step 52",
+  instagram_d56: "Instagram test - step 56",
+  instagram_d72: "Instagram test - step 72",
+  instagram_chroma_d28: "Instagram test - chroma step 28",
+  instagram_chroma_d40: "Instagram test - chroma step 40",
+  instagram_chroma_d56: "Instagram test - chroma step 56",
+  none: "No resize (original size)",
 };
 
 export interface EmbedModalProps {
@@ -207,12 +221,24 @@ export function EmbedModal({
                   value={targetPlatform}
                   onChange={(e) => onTargetPlatformChange(e.target.value)}
                 >
-                  {Object.keys(PLATFORM_WIDTHS).map((key) => (
+                  {Object.keys(PLATFORM_PROFILES).map((key) => (
                     <option key={key} value={key}>{PLATFORM_LABELS[key] ?? key}</option>
                   ))}
                 </select>
                 <p className="muted" style={{ fontSize: "0.8rem", marginTop: "0.25rem" }}>
-                  Pre-resizes to the platform's measured output geometry so the platform does not resample it. Resampling shifts the 8x8 DCT grid and destroys the payload. Universal (1440x1440 square) is safe on WhatsApp, Telegram and Instagram alike.
+                  {(() => {
+                    const prof = profileFor(targetPlatform);
+                    const size = prof.width === 0
+                      ? "no resize"
+                      : prof.square
+                        ? prof.width + " x " + prof.width + " square"
+                        : prof.width + "px wide";
+                    return "Pre-resizes to " + size + ". " + prof.note;
+                  })()}
+                </p>
+                <p className="muted" style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}>
+                  Sizes are measured from real platform round-trips. Choosing a size
+                  the platform will resize destroys the hidden data.
                 </p>
               </div>
             )}
