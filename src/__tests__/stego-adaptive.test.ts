@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  PLATFORM_PROFILES, profileFor, DEFAULT_PLATFORM,
+  PLATFORM_PROFILES, profileFor, DEFAULT_PLATFORM, USER_PLATFORMS,
   blockActivity, activityRung, deltaForBlock, DELTA_LADDER, LADDER_MEAN,
 } from "../stego-adaptive";
 import { coverGeometry } from "../stego-qim";
@@ -44,8 +44,34 @@ describe("measured platform profiles", () => {
     // question, not something this test can assert an answer to yet.
     for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
       if (name === "none") continue;   // lossless channel, no recompression
-      if (p.lumaAcCount !== undefined) continue;   // zigzag bracket: threshold is exactly what's being tested
+      // Only the hidden bracket profiles are exempt. instagram and universal
+      // now carry lumaAcCount too (§13.5 made the restriction the default),
+      // and they must still clear the threshold like any other real target.
+      if (!USER_PLATFORMS.includes(name) && p.lumaAcCount !== undefined) continue;
       expect(p.delta).toBeGreaterThanOrEqual(26);
+    }
+  });
+
+  it("every user-facing platform exists, and no bracket profile is one", () => {
+    // The picker shows USER_PLATFORMS; the decoder sweeps all of
+    // PLATFORM_PROFILES. A name in the first list that is missing from the
+    // second is a blank dropdown entry, and a bracket profile that leaks into
+    // the first is 13 test settings back in front of the user.
+    for (const name of USER_PLATFORMS) {
+      expect(PLATFORM_PROFILES[name], `${name} is offered but does not exist`).toBeDefined();
+    }
+    for (const name of USER_PLATFORMS) {
+      expect(/_d\d+$/.test(name), `${name} looks like a bracket profile`).toBe(false);
+    }
+  });
+
+  it("bracket profiles stay decodable even though they are hidden", () => {
+    // Hiding them from the picker must not remove them: decodeQimImageFile
+    // guesses an image's settings by sweeping these, so dropping one makes
+    // every image already made with it undecodable.
+    for (const name of ["instagram_d56", "instagram_chroma_d28", "instagram_zz6_d56"]) {
+      expect(PLATFORM_PROFILES[name]).toBeDefined();
+      expect(USER_PLATFORMS.includes(name)).toBe(false);
     }
   });
 

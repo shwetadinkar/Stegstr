@@ -495,7 +495,15 @@ function App({ profile }: { profile: string | null }) {
   const rootNotes = notes
     .filter((n) => {
       const eTag = n.tags.find((t) => t[0] === "e");
-      return (!eTag || !noteIds.has(eTag[1])) && !deletedNoteIds.has(n.id);
+      // Explicitly importing a note from an image overrides an earlier
+      // deletion. Deleting a note only adds a kind-5 tombstone -- the note
+      // itself stays in `events` -- so without this exception a note you once
+      // deleted can never be recovered: the decode review still offers it as
+      // new (its id is gone from nothing), you accept it, and it is filtered
+      // straight back out with no message. Accepting it in the review is a
+      // deliberate "put this back".
+      const suppressed = deletedNoteIds.has(n.id) && !importedEventIds.has(n.id);
+      return (!eTag || !noteIds.has(eTag[1])) && !suppressed;
     });
   const getRepliesTo = (noteId: string) =>
     notes.filter((n) => n.tags.find((t) => t[0] === "e" && t[1] === noteId));
@@ -3011,6 +3019,22 @@ function App({ profile }: { profile: string | null }) {
               return next;
             });
             addStegoLog(`Added ${accepted.length} item(s) to feed`);
+            // Say why an accepted item will or will not appear in the Home
+            // feed. "Added N item(s)" on its own has now been misleading
+            // three separate times -- it reports the merge, which always
+            // succeeds, not the display, which is where every one of those
+            // bugs actually lived.
+            accepted.forEach((e) => {
+              const eTag = e.tags?.find((t) => t[0] === "e");
+              const reasons = [
+                e.kind !== 1 ? `kind ${e.kind}, not a feed note` : null,
+                eTag && noteIds.has(eTag[1]) ? `reply — shows under its parent, not top level` : null,
+                deletedNoteIds.has(e.id) ? "was previously deleted, now un-deleted" : null,
+              ].filter(Boolean);
+              addStegoLog(
+                `  ${e.id.slice(0, 8)}… ${reasons.length ? reasons.join("; ") : "will show in the feed"}`,
+              );
+            });
             setDetectReview(null);
           }}
         />

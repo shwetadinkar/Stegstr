@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import * as Nostr from "./nostr-stub";
 import { isWeb, pickImageFile } from "./platform-web";
 import { getQimCapacityForFile } from "./stego-qim";
-import { PLATFORM_PROFILES, profileFor } from "./stego-adaptive";
+import { PLATFORM_PROFILES, profileFor, USER_PLATFORMS } from "./stego-adaptive";
 import { getDotCapacityForFile } from "./stego-dot-web";
 import type { ProfileData } from "./types";
 
@@ -78,6 +78,17 @@ export function EmbedModal({
 }: EmbedModalProps) {
   const [capacityInfo, setCapacityInfo] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Bracket/experiment profiles are hidden by default -- there are 13 of them
+  // against 9 real targets, which buried the platforms anyone actually wants.
+  // The currently selected one always stays listed, so a selection made with
+  // the toggle on does not silently vanish when it is turned off.
+  const [showTestProfiles, setShowTestProfiles] = useState(false);
+  const platformKeys = [
+    ...USER_PLATFORMS.filter((k) => k in PLATFORM_PROFILES),
+    ...Object.keys(PLATFORM_PROFILES).filter(
+      (k) => !USER_PLATFORMS.includes(k) && (showTestProfiles || k === targetPlatform),
+    ),
+  ];
 
   useEffect(() => {
     if (!embedCoverFile) {
@@ -225,10 +236,18 @@ export function EmbedModal({
                   value={targetPlatform}
                   onChange={(e) => onTargetPlatformChange(e.target.value)}
                 >
-                  {Object.keys(PLATFORM_PROFILES).map((key) => (
+                  {platformKeys.map((key) => (
                     <option key={key} value={key}>{PLATFORM_LABELS[key] ?? key}</option>
                   ))}
                 </select>
+                <label style={{ display: "block", marginTop: "0.4rem", fontSize: "0.8rem", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={showTestProfiles}
+                    onChange={(e) => setShowTestProfiles(e.target.checked)}
+                  />
+                  {" "}Show experimental test profiles (for bracket testing)
+                </label>
                 <p className="muted" style={{ fontSize: "0.8rem", marginTop: "0.25rem" }}>
                   {(() => {
                     const prof = profileFor(targetPlatform);

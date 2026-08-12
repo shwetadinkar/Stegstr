@@ -1160,3 +1160,44 @@ would be relying on the shrink loop rather than the estimate.
    the selection. A mixed feed whose *last* fitting event is over-long still
    drops it whole.
 4. Everything from §12.5 and §13.4 is unchanged and still open.
+
+### 13.7 Eighth addendum — deleting a note made it unrecoverable from an image
+
+**A deleted note could never be re-imported.** Deleting does not remove the
+note: it appends a kind-5 tombstone and leaves the kind-1 in `events`.
+`rootNotes` then filters that id out permanently. So decoding an image
+containing a note you had once deleted offered it as new, accepted it, merged
+it successfully -- and the display filter dropped it straight back out, with
+no message. Found by a user testing exactly the sensible way: delete the feed,
+then decode the image that contains it. An explicitly imported id now
+overrides the tombstone, since accepting in the review modal is a deliberate
+"put this back".
+
+**`Added N item(s) to feed` has now been misleading three separate times**
+(§13.3 importedEventIds, §13.5 the Following tab, and this). Every one of
+those bugs lived in the *display*, while the log line reports the *merge*,
+which always succeeds. It now prints a line per accepted item saying whether
+it will appear and, if not, why -- reply, non-note kind, previously deleted.
+The next bug of this shape should announce itself instead of looking like a
+dead button.
+
+**Not a bug, worth recording:** importing a note you already hold correctly
+does nothing. Nostr events are content-addressed, so the same note has the
+same id everywhere; there is no "duplicate copy" state to represent. The
+review modal reports these as "already had" rather than as new. This confused
+testing for a while -- embedding your own feed and decoding it on the same
+machine cannot demonstrate that import works, because there is genuinely
+nothing to import.
+
+**Picker sanitised.** 13 of the 22 profiles in the dropdown were bracket
+ladders. They cannot be deleted -- `decodeQimImageFile` sweeps
+`PLATFORM_PROFILES` to auto-detect an image's settings, so removing one makes
+every image made with it undecodable -- so `USER_PLATFORMS` now controls what
+the picker offers (9 real targets) while the record keeps everything. A
+checkbox reveals the test profiles for real-device bracketing, and the
+current selection is always listed so it cannot vanish mid-test. Two tests
+guard the split. A third test was tightened: it had exempted every profile
+with `lumaAcCount` set, which silently stopped covering `instagram` and
+`universal` once §13.5 gave them that field.
+
+**185 tests passing**, `tsc --noEmit` clean, `npm run build` clean.

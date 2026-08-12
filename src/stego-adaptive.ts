@@ -238,6 +238,28 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
 export const DEFAULT_PLATFORM = "whatsapp_standard";
 
 /**
+ * Platforms worth putting in front of a user, in the order they should appear.
+ *
+ * Everything else in PLATFORM_PROFILES is a bracket/experiment profile from
+ * the delta, chroma and zigzag ladders. Those cannot simply be deleted --
+ * decodeQimImageFile sweeps every profile to auto-detect an image's settings,
+ * so removing one makes every image ever made with it undecodable. They stay
+ * in the record and drop out of the picker instead, behind a toggle so real
+ * device bracketing is still possible without editing code.
+ */
+export const USER_PLATFORMS: readonly string[] = [
+  "universal",
+  "whatsapp_standard",
+  "whatsapp_hd",
+  "telegram_photo",
+  "instagram",
+  "facebook",
+  "twitter",
+  "imessage",
+  "none",
+];
+
+/**
  * Step sizes a decoder should try, most likely first.
  *
  * The decoder cannot know which platform an image was made for, and the payload
