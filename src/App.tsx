@@ -1217,7 +1217,9 @@ function App({ profile }: { profile: string | null }) {
         const classified: DetectedEvent[] = normalized.map((ev) => ({
           ...ev,
           verified: verifyEvent(ev as never),
-          followed: contactsSet.has(ev.pubkey),
+          // Own notes count as trusted: re-importing your own feed from an
+          // image you made should not require ticking each item.
+          followed: contactsSet.has(ev.pubkey) || viewingPubkeys.has(ev.pubkey),
           duplicate: knownIds.has(ev.id),
         }));
         const badCount = classified.filter((ev) => !ev.verified).length;
@@ -1582,10 +1584,18 @@ function App({ profile }: { profile: string | null }) {
             return enc;
           }
 
-          // Budget is on the ENCRYPTED payload; packForCapacity estimates from
-          // compressed JSON, so leave headroom for the encryption envelope.
+          // The budget applies to the ENCRYPTED payload. stego-crypto does not
+          // compress -- AES-GCM output tracks the plaintext size -- so the
+          // packer must be told not to assume deflate. It defaults to 0.35,
+          // which over-estimates capacity by ~3x and produced "payload too
+          // large" failures on small covers.
+          //
+          // ratio 1.05 covers the JSON plus the encryption envelope (magic, IV,
+          // GCM tag, and any per-recipient key wrapping). The binary search
+          // below closes whatever this estimate gets wrong.
           const packed = packForCapacity(events, {
-            budget: Math.floor(maxPayloadBytes * 0.9),
+            budget: Math.floor(maxPayloadBytes * 0.85),
+            compressionRatio: 1.05,
             self: effectivePrivKey
               ? Nostr.getPublicKey(Nostr.hexToBytes(effectivePrivKey))
               : undefined,
@@ -1621,7 +1631,19 @@ function App({ profile }: { profile: string | null }) {
           }
 
           if (!best) {
-            addStegoLog("Nothing fits: cover image is too small for even one event");
+            // Even an empty bundle exceeds capacity: the encryption envelope
+            // alone does not fit. Report the actual numbers rather than a bare
+            // "payload too large" from deep inside the encoder.
+            const empty = await encryptEvents([]);
+            addStegoLog(
+              `Cover too small: envelope alone is ${empty.length}B, ` +
+              `capacity is ${maxPayloadBytes}B. Use a larger cover image.`,
+            );
+            setDecodeError(
+              `This image is too small. It holds about ${Math.floor(maxPayloadBytes / 1024)} KB, ` +
+              `but the encrypted bundle needs at least ${Math.ceil(empty.length / 1024)} KB. ` +
+              `Try a larger photo.`,
+            );
             return null;
           }
           if (bestCount < events.length) {
@@ -1688,14 +1710,29 @@ function App({ profile }: { profile: string | null }) {
             addStegoLog("Self-test PASSED! Payload survives encode/decode round-trip.");
           } else {
             addStegoLog(`Self-test FAILED: ${selfTestResult.error}`);
+            // A failed self-test means the payload cannot even survive being
+            // read straight back, let alone a platform. Covers with large flat
+            // areas -- logos, screenshots, plain backgrounds -- are the usual
+            // cause: there is no texture to hide the embedding in. Say so,
+            // rather than letting the user discover it after a phone round trip.
+            setDecodeError(
+              "This image could not be read back reliably. Covers with large flat " +
+              "areas (logos, screenshots, plain backgrounds) have little texture " +
+              "to hide data in. Try a photograph instead.",
+            );
             addStegoLog("WARNING: Payload may not survive platform transforms. Consider using Dot method instead.");
           }
 
           // Step 6: Download
           const name = embedCoverFile.name.replace(/\.[^.]+$/, "") || "image";
           setStegoProgress("Downloading embedded image...");
-          addStegoLog(`Triggering download: ${name}-stegstr.jpg`);
-          downloadBlob(blob, `${name}-stegstr.jpg`);
+          // Include the target platform in the filename. Every platform renames
+          // uploads on the way out, so without this there is no way to tell
+          // which settings produced a returned image -- which matters whenever
+          // more than one configuration is being compared.
+          const outName = `${name}-stegstr-${targetPlatform}.jpg`;
+          addStegoLog(`Triggering download: ${outName}`);
+          downloadBlob(blob, outName);
           addStegoLog("SUCCESS - Download started!");
           setEmbedModalOpen(false);
           setEmbedCoverFile(null);

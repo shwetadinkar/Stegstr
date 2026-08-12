@@ -36,13 +36,19 @@ class OffscreenCanvasPolyfill {
     return this.canvas.getContext(kind as "2d");
   }
 
-  async convertToBlob(opts: { type?: string; quality?: number } = {}): Promise<BlobLike> {
+  async convertToBlob(opts: { type?: string; quality?: number } = {}): Promise<Blob> {
     const quality = opts.quality ?? 0.92;
     const buf = opts.type === "image/png"
       ? this.canvas.toBuffer("image/png")
       : this.canvas.toBuffer("image/jpeg", Math.round(quality * 100));
-    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-    return { arrayBuffer: async () => ab as ArrayBuffer };
+    // Must be a REAL Blob. resizeCoverForPlatform does `new File([blob], ...)`,
+    // and a duck-typed object with only arrayBuffer() is serialised as a string
+    // there, producing a 15-byte file and an "Unsupported image type" further
+    // down. The earlier duck-typed version silently broke every test that went
+    // through the file-level path.
+    return new Blob([new Uint8Array(buf)], {
+      type: opts.type ?? "image/jpeg",
+    });
   }
 }
 
@@ -54,8 +60,10 @@ export function installCanvasPolyfill(): void {
   const g = globalThis as Record<string, unknown>;
   g.OffscreenCanvas = OffscreenCanvasPolyfill;
   g.ImageData = NapiImageData;
-  g.createImageBitmap = async (src: BlobLike) => {
-    const ab = await src.arrayBuffer();
+  g.createImageBitmap = async (src: BlobLike & { __bytes?: Uint8Array }) => {
+    const ab = src.__bytes
+      ? (src.__bytes.buffer.slice(0, src.__bytes.byteLength) as ArrayBuffer)
+      : await src.arrayBuffer();
     const img = await loadImage(Buffer.from(ab)) as unknown as Record<string, unknown>;
     // Browsers expose ImageBitmap.close(); the encoder calls it to free memory.
     if (typeof img.close !== "function") img.close = () => { /* no-op under Node */ };
@@ -63,14 +71,22 @@ export function installCanvasPolyfill(): void {
   };
 }
 
-/** Minimal File stand-in: stego-qim only ever reads bytes and name. */
+/**
+ * Minimal File stand-in.
+ *
+ * Carries a __bytes marker so the polyfilled createImageBitmap can recognise it.
+ * Node has no File that @napi-rs/canvas understands, and without this the
+ * capacity path (which calls createImageBitmap directly on the File rather than
+ * on a Blob) throws "Unsupported image type".
+ */
 export function makeFile(bytes: Uint8Array, name = "cover.jpg", type = "image/jpeg"): File {
-  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const copy = new Uint8Array(bytes);
   return {
     name,
     type,
-    size: bytes.length,
-    arrayBuffer: async () => ab as ArrayBuffer,
+    size: copy.length,
+    __bytes: copy,
+    arrayBuffer: async () => copy.buffer.slice(0, copy.byteLength) as ArrayBuffer,
     slice: () => { throw new Error("not implemented"); },
     stream: () => { throw new Error("not implemented"); },
     text: async () => { throw new Error("not implemented"); },
