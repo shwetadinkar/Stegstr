@@ -28,10 +28,10 @@ const payload = (n: number, seed = 1) => {
 
 /**
  * High-entropy payload (mulberry32 PRNG) for tests that need embedded bit
- * count to scale with byte count. The `payload()` helper above has period
- * 256 (i*37+seed mod 256 cycles), which deflate compresses away almost
- * entirely for larger sizes -- fine for round-trip tests, misleading for
- * anything measuring how much of the image a given payload size touches.
+ * count to scale predictably with byte count. The `payload()` helper above
+ * has period 256 (i*37+seed mod 256 cycles), which deflate compresses away
+ * for larger sizes -- fine for plain round-trip tests, misleading for
+ * anything measuring capacity thresholds.
  */
 const randomPayload = (n: number, seed = 1) => {
   let s = seed >>> 0;
@@ -117,16 +117,34 @@ describe("chroma subsampling guard (real encoder)", () => {
   });
 });
 
-describe("chroma-channel embedding (§10.4)", () => {
+describe("chroma-channel embedding, scalar-per-block (§11 second addendum)", () => {
   it("round-trips a payload through a chroma-enabled profile via the real encoder", async () => {
     const cover = makeCoverJpeg(1440, 1440, 5);
-    const p = payload(512);
+    const p = payload(150);
     const prof = PROFILES.instagram_chroma_d28;
     const stego = await embedQim(cover, p, {
       delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
     });
     const received = await simulateChannel(stego, { quality: 80 });
     const out = await detectQim(received, {
+      delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
+    });
+    expect(same(out, p)).toBe(true);
+  }, 120000);
+
+  it("round-trips a payload using real (non-periodic) entropy, not just the simple test pattern", async () => {
+    // The bug this redesign fixes was invisible to a small periodic payload
+    // and only showed up with a payload big enough to actually populate
+    // every AC position in a block. The scalar scheme has no AC positions
+    // left to hide a similar blind spot in, but keep a high-entropy payload
+    // here anyway so this test doesn't quietly regress to the same mistake.
+    const cover = makeCoverJpeg(1440, 1440, 21);
+    const p = randomPayload(150, 21);
+    const prof = PROFILES.instagram_chroma_d28;
+    const stego = await embedQim(cover, p, {
+      delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
+    });
+    const out = await detectQim(stego, {
       delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
     });
     expect(same(out, p)).toBe(true);
@@ -144,38 +162,53 @@ describe("chroma-channel embedding (§10.4)", () => {
   it("chroma-first allocation: a small payload leaves luma far quieter than a luma-only embed", async () => {
     // The actual invisibility win this feature exists to deliver: a payload
     // that fits in chroma capacity should barely touch the luma channel,
-    // unlike an equivalent luma-only embed at the same step size. Uses the
-    // 4KB payload size from HANDOFF §10.3-10.4 -- the size that triggered a
-    // visible crosshatch on real Instagram at luma delta=56 -- so the touched
-    // fraction of the image is large enough for the whole-image mean Y diff
-    // to clear generation-loss noise from the JPEG re-encode itself, while
-    // still comfortably fitting entirely within chroma capacity (~389K raw
-    // slots at 1440x1440 vs luma's ~778K).
+    // unlike an equivalent luma-only embed at the same step size. Sized
+    // close to chroma's actual ceiling (~16200 raw bits, 1 bit/block/channel
+    // at 1440x1440) rather than tiny, so the luma-only baseline touches
+    // enough blocks to produce a signal above JPEG generation-loss noise.
+    //
+    // A plain re-encode (zero embedding, same cover, same quality) already
+    // has non-zero mean Y diff -- JPEG generation loss alone. That baseline
+    // dominates both raw measurements (~5.6 out of ~6.7 and ~7.8 here), so
+    // the comparison has to subtract it out to see the embedding-specific
+    // signal cleanly, rather than comparing raw totals.
     const cover = makeCoverJpeg(1440, 1440, 9);
-    const p = randomPayload(4000, 9);
+    const p = randomPayload(250, 9);
     const prof = PROFILES.instagram_chroma_d28;
 
     const chromaStego = await embedQim(cover, p, {
       delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
     });
     const lumaOnlyStego = await embedQim(cover, p, { delta: prof.delta });
+    const zeroEmbedBaseline = await embedQim(cover, new Uint8Array(0), { delta: prof.delta, compress: false });
 
     const { data: coverPixels, width, height } = await decodeRgba(cover);
     const { data: chromaPixels } = await decodeRgba(chromaStego);
     const { data: lumaPixels } = await decodeRgba(lumaOnlyStego);
+    const { data: baselinePixels } = await decodeRgba(zeroEmbedBaseline);
 
-    const chromaYDiff = meanYDiff(coverPixels, chromaPixels, width, height);
-    const lumaYDiff = meanYDiff(coverPixels, lumaPixels, width, height);
+    const baselineYDiff = meanYDiff(coverPixels, baselinePixels, width, height);
+    const chromaSignal = meanYDiff(coverPixels, chromaPixels, width, height) - baselineYDiff;
+    const lumaSignal = meanYDiff(coverPixels, lumaPixels, width, height) - baselineYDiff;
 
-    // Chroma embedding should leave the luma channel meaningfully quieter
-    // than luma-only embedding of the same payload -- not zero, because
-    // recomposing RGB from (Y, newCb, newCr) and rounding each channel to an
-    // 8-bit integer independently doesn't perfectly preserve Y (a small
-    // drift proportional to how many super-blocks were touched), on top of
-    // JPEG generation-loss noise shared by both cases. That drift is real
-    // but far smaller than actual QIM-driven luma perturbation -- measured
-    // at roughly half here, well outside noise.
-    expect(chromaYDiff).toBeLessThan(lumaYDiff * 0.75);
+    expect(chromaSignal).toBeLessThan(lumaSignal * 0.75);
+  }, 120000);
+
+  it("round-trips a payload large enough to overflow chroma capacity into luma", async () => {
+    // This is the exact scenario that broke the previous DCT-AC design: a
+    // payload big enough to span both channels and spill into luma. Chroma
+    // capacity here is ~16200 raw bits (~330 bytes after repeat+RS
+    // overhead), so 1000 bytes guarantees overflow.
+    const cover = makeCoverJpeg(1440, 1440, 13);
+    const p = randomPayload(1000, 13);
+    const prof = PROFILES.instagram_chroma_d28;
+    const stego = await embedQim(cover, p, {
+      delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
+    });
+    const out = await detectQim(stego, {
+      delta: prof.delta, chromaDelta: prof.chromaDelta, chromaChannels: prof.chromaChannels,
+    });
+    expect(same(out, p)).toBe(true);
   }, 120000);
 
   it("chroma-disabled profiles are unaffected: omitting chromaDelta behaves exactly like before", async () => {

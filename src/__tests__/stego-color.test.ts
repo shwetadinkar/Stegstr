@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  rgbToYCbCr, ycbcrToRgb, downsampleChromaSuperblock, upsampleChromaSuperblock,
+  rgbToYCbCr, ycbcrToRgb, readChromaSuperblockScalar, writeChromaSuperblockScalar,
   CHROMA_SUPERBLOCK_PX,
 } from "../stego-color";
 
@@ -27,55 +27,51 @@ describe("rgbToYCbCr / ycbcrToRgb", () => {
   });
 });
 
-describe("chroma super-block downsample / upsample", () => {
+describe("chroma super-block scalar read / write", () => {
   const width = 32;
   const height = 32;
 
-  it("downsamples a uniform 16x16 region to a uniform block", () => {
+  it("reads a uniform 16x16 region as its own value", () => {
     const plane = new Float64Array(width * height).fill(77);
-    const block = downsampleChromaSuperblock(plane, width, 0, 0);
-    for (const v of block) expect(v).toBeCloseTo(77, 6);
+    expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(77, 6);
   });
 
-  it("box-averages a per-pixel-alternating pattern to the midpoint", () => {
-    // Alternates every single pixel column, so every 2x2 downsample group
-    // (columns [2c, 2c+1]) spans both values -- unlike a period-4 pattern,
-    // which would align with group boundaries and stay uniform per group.
-    const plane = new Float64Array(width * height);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        plane[y * width + x] = x % 2 === 0 ? 200 : 56;
-      }
-    }
-    const block = downsampleChromaSuperblock(plane, width, 0, 0);
-    for (const v of block) expect(v).toBeCloseTo(128, 6);
-  });
-
-  it("upsample writes a flat 2x2 tile per downsampled value, round-tripping through downsample", () => {
-    const plane = new Float64Array(width * height).fill(128);
-    const target = new Float64Array(64);
-    for (let i = 0; i < 64; i++) target[i] = 50 + i;
-    upsampleChromaSuperblock(plane, width, 0, 0, target);
-
-    // Each written pixel should equal its source value.
+  it("write is flat and uniform across the whole 16x16 block", () => {
+    const plane = new Float64Array(width * height).fill(10);
+    writeChromaSuperblockScalar(plane, width, 0, 0, 99);
     for (let r = 0; r < CHROMA_SUPERBLOCK_PX; r++) {
       for (let c = 0; c < CHROMA_SUPERBLOCK_PX; c++) {
-        const expected = target[Math.floor(r / 2) * 8 + Math.floor(c / 2)];
-        expect(plane[r * width + c]).toBe(expected);
+        expect(plane[r * width + c]).toBe(99);
       }
     }
-
-    // Downsampling the written region recovers exactly what was written --
-    // this is the whole point: a flat 2x2 tile survives any local-averaging
-    // filter, so we don't need to know the real encoder's exact filter.
-    const recovered = downsampleChromaSuperblock(plane, width, 0, 0);
-    for (let i = 0; i < 64; i++) expect(recovered[i]).toBeCloseTo(target[i], 6);
   });
 
-  it("does not touch pixels outside the addressed super-block", () => {
+  it("read/write round-trips exactly for a flat block", () => {
+    const plane = new Float64Array(width * height).fill(0);
+    writeChromaSuperblockScalar(plane, width, 0, 0, 173);
+    expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(173, 6);
+  });
+
+  it("read averages only the safe interior, ignoring edge contamination", () => {
+    // Simulates the real failure mode this design works around: the outer
+    // ring of a super-block can be smeared toward a neighbour's value by
+    // the JPEG decoder's chroma upsampling. The interior-only read should
+    // still recover the true value even if the edges are corrupted.
+    const plane = new Float64Array(width * height).fill(200);
+    // Corrupt a 2px ring around the edge of super-block (0,0), as observed
+    // empirically from real decoder output.
+    for (let r = 0; r < CHROMA_SUPERBLOCK_PX; r++) {
+      for (let c = 0; c < CHROMA_SUPERBLOCK_PX; c++) {
+        const onEdge = r < 2 || r >= 14 || c < 2 || c >= 14;
+        if (onEdge) plane[r * width + c] = 0; // wildly different neighbour value
+      }
+    }
+    expect(readChromaSuperblockScalar(plane, width, 0, 0)).toBeCloseTo(200, 6);
+  });
+
+  it("write does not touch pixels outside the addressed super-block", () => {
     const plane = new Float64Array(width * height).fill(10);
-    const target = new Float64Array(64).fill(200);
-    upsampleChromaSuperblock(plane, width, 0, 1, target); // second super-block, columns 16-31
+    writeChromaSuperblockScalar(plane, width, 0, 1, 200); // second super-block, columns 16-31
     // First super-block (columns 0-15) must be untouched.
     for (let r = 0; r < 16; r++) {
       for (let c = 0; c < 16; c++) {

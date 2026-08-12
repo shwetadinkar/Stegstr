@@ -34,7 +34,7 @@ import {
 } from "./stego-adaptive";
 import {
   ycbcrToRgb, extractChromaPlanes,
-  downsampleChromaSuperblock, upsampleChromaSuperblock, CHROMA_SUPERBLOCK_PX,
+  readChromaSuperblockScalar, writeChromaSuperblockScalar, CHROMA_SUPERBLOCK_PX,
 } from "./stego-color";
 
 /**
@@ -234,31 +234,30 @@ function zigzagIndexTo2d(zi: number): [number, number] {
 }
 
 // ---------------------------------------------------------------------------
-// Chroma coefficient stream: one chroma DCT block = one 16x16 super-block
+// Chroma block stream: one scalar QIM slot per 16x16 super-block per channel
 // (the real encoder subsamples chroma 2x2 before its own DCT -- see
-// stego-color.ts module doc). Channel-major, then AC-major within a channel,
-// so a small payload lands entirely in the first channel's low AC positions.
+// stego-color.ts module doc; a scalar-per-block scheme is what survives a
+// real encode/decode round trip -- see stego-color.ts module doc for why the
+// earlier DCT-AC-coefficient design did not). Channel-major order, so a
+// small payload lands entirely in the first channel.
 // ---------------------------------------------------------------------------
 
-interface ChromaCoeffPosition {
+interface ChromaBlockPosition {
   channel: "cb" | "cr";
   sbRow: number;
   sbCol: number;
-  zigzagIdx: number;
 }
 
-function buildChromaCoeffStream(
+function buildChromaBlockStream(
   superBlocksY: number,
   superBlocksX: number,
   channels: Array<"cb" | "cr">,
-): ChromaCoeffPosition[] {
-  const stream: ChromaCoeffPosition[] = [];
+): ChromaBlockPosition[] {
+  const stream: ChromaBlockPosition[] = [];
   for (const channel of channels) {
-    for (let zi = 0; zi < AC_INDICES.length; zi++) {
-      for (let sbRow = 0; sbRow < superBlocksY; sbRow++) {
-        for (let sbCol = 0; sbCol < superBlocksX; sbCol++) {
-          stream.push({ channel, sbRow, sbCol, zigzagIdx: zi });
-        }
+    for (let sbRow = 0; sbRow < superBlocksY; sbRow++) {
+      for (let sbCol = 0; sbCol < superBlocksX; sbCol++) {
+        stream.push({ channel, sbRow, sbCol });
       }
     }
   }
@@ -474,7 +473,7 @@ export async function embedQim(
   const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);
   const superBlocksX = Math.floor(width / CHROMA_SUPERBLOCK_PX);
   const chromaStream = chromaEnabled
-    ? buildChromaCoeffStream(superBlocksY, superBlocksX, chromaChannels)
+    ? buildChromaBlockStream(superBlocksY, superBlocksX, chromaChannels)
     : [];
 
   const totalCapacity = chromaStream.length + stream.length;
@@ -487,6 +486,7 @@ export async function embedQim(
   const chromaBitCount = Math.min(bits.length, chromaStream.length);
   const chromaBits = bits.slice(0, chromaBitCount);
   const lumaBits = bits.slice(chromaBitCount);
+
 
   // Get quantization table for the target quality
   const qt = quantizationTable(quality);
@@ -570,66 +570,31 @@ export async function embedQim(
     }
   }
 
-  // Step 7 (chroma): embed chromaBits into Cb/Cr. Independent of the luma
-  // pass above -- adding an equal delta to R,G,B (how the luma pass writes
-  // pixels) cancels out in Cb=B-Y, Cr=R-Y, so Cb/Cr are still exactly the
-  // original values at this point.
+  // Step 7 (chroma): embed chromaBits into Cb/Cr, one scalar QIM value per
+  // super-block per channel (see stego-color.ts module doc for why -- a
+  // DCT-AC scheme mirroring luma does not survive a real photo). Independent
+  // of the luma pass above -- adding an equal delta to R,G,B (how the luma
+  // pass writes pixels) cancels out in Cb=B-Y, Cr=R-Y, so Cb/Cr are still
+  // exactly the original values at this point. No texture-adaptive step size
+  // here: that machinery reads DCT coefficients above the embedding band,
+  // which doesn't exist in a scalar-domain scheme.
   if (chromaEnabled && chromaBits.length > 0) {
     const { cb: cbPlane, cr: crPlane } = extractChromaPlanes(pixels, width, height);
     const planes: Record<"cb" | "cr", Float64Array> = { cb: cbPlane, cr: crPlane };
-    const qtChroma = quantizationTable(quality, "chroma");
-    const superBlocksPerPlane = superBlocksY * superBlocksX;
+    const touchedSuperblocks = new Set<string>();
 
-    // Which (channel, sbRow, sbCol) super-blocks carry at least one bit.
-    const modifiedChroma = new Map<string, { channel: "cb" | "cr"; sbRow: number; sbCol: number }>();
     for (let i = 0; i < chromaBits.length; i++) {
-      const p = chromaStream[i];
-      modifiedChroma.set(`${p.channel},${p.sbRow},${p.sbCol}`, p);
-    }
-
-    for (const { channel, sbRow, sbCol } of modifiedChroma.values()) {
+      const { channel, sbRow, sbCol } = chromaStream[i];
       const plane = planes[channel];
-      const channelOffset = chromaChannels.indexOf(channel) * AC_INDICES.length * superBlocksPerPlane;
-
-      const rawBlock = downsampleChromaSuperblock(plane, width, sbRow, sbCol);
-      const shifted = new Float64Array(64);
-      for (let i = 0; i < 64; i++) shifted[i] = rawBlock[i] - 128;
-      const dctCoeffs = forwardDCT8x8(shifted);
-      const qCoeffs = quantize(dctCoeffs, qtChroma);
-
-      const blockDelta = adaptive
-        ? deltaForBlock(chromaDelta!, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
-        : chromaDelta!;
-
-      let modified = false;
-      for (let zi = 0; zi < AC_INDICES.length; zi++) {
-        const streamIdx = channelOffset + zi * superBlocksPerPlane + sbRow * superBlocksX + sbCol;
-        if (streamIdx >= chromaBits.length) continue;
-
-        const [dy, dx] = zigzagIndexTo2d(zi);
-        const coeffIdx = dy * 8 + dx;
-        const c = qCoeffs[coeffIdx];
-        const newC = qimEmbed(c, chromaBits[streamIdx], blockDelta);
-        if (newC !== c) {
-          qCoeffs[coeffIdx] = newC;
-          modified = true;
-        }
-      }
-
-      if (modified) {
-        const dequantCoeffs = dequantize(qCoeffs, qtChroma);
-        const spatialBlock = inverseDCT8x8(dequantCoeffs);
-        const resultBlock = new Float64Array(64);
-        for (let i = 0; i < 64; i++) resultBlock[i] = spatialBlock[i] + 128;
-        upsampleChromaSuperblock(plane, width, sbRow, sbCol, resultBlock);
-      }
+      const current = readChromaSuperblockScalar(plane, width, sbRow, sbCol);
+      const target = qimEmbed(current, chromaBits[i], chromaDelta!);
+      writeChromaSuperblockScalar(plane, width, sbRow, sbCol, target);
+      touchedSuperblocks.add(`${sbRow},${sbCol}`);
     }
 
     // Recompose RGB for pixels in every touched super-block, preserving
     // whatever Y the luma pass already wrote and combining it with the
-    // (possibly QIM-modified) Cb/Cr.
-    const touchedSuperblocks = new Set<string>();
-    for (const { sbRow, sbCol } of modifiedChroma.values()) touchedSuperblocks.add(`${sbRow},${sbCol}`);
+    // QIM-modified Cb/Cr.
     for (const key of touchedSuperblocks) {
       const [sbRow, sbCol] = key.split(",").map(Number);
       const startY = sbRow * CHROMA_SUPERBLOCK_PX;
@@ -704,38 +669,19 @@ export async function detectQim(
     const margins: number[] = [];
 
     // Chroma bits come first in the combined stream (matching embedQim), so
-    // extract them before luma.
+    // extract them before luma. Scalar-per-block scheme (§11 second
+    // addendum) -- no DCT, no texture-adaptive step, just a direct read of
+    // each block's safe-interior chroma average.
     if (chromaEnabled) {
       const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);
       const superBlocksX = Math.floor(width / CHROMA_SUPERBLOCK_PX);
-      const chromaStream = buildChromaCoeffStream(superBlocksY, superBlocksX, chromaChannels);
+      const chromaStream = buildChromaBlockStream(superBlocksY, superBlocksX, chromaChannels);
       const { cb: cbPlane, cr: crPlane } = extractChromaPlanes(pixels, width, height);
       const planes: Record<"cb" | "cr", Float64Array> = { cb: cbPlane, cr: crPlane };
-      const qtChroma = quantizationTable(quality, "chroma");
 
-      const chromaDctCache = new Map<string, Float64Array>();
-      const chromaDeltaCache = new Map<string, number>();
-
-      for (const { channel, sbRow, sbCol, zigzagIdx } of chromaStream) {
-        const key = `${channel},${sbRow},${sbCol}`;
-        let qCoeffs = chromaDctCache.get(key);
-        if (!qCoeffs) {
-          const rawBlock = downsampleChromaSuperblock(planes[channel], width, sbRow, sbCol);
-          const shifted = new Float64Array(64);
-          for (let i = 0; i < 64; i++) shifted[i] = rawBlock[i] - 128;
-          const dctCoeffs = forwardDCT8x8(shifted);
-          qCoeffs = quantize(dctCoeffs, qtChroma);
-          chromaDctCache.set(key, qCoeffs);
-          chromaDeltaCache.set(key, adaptive
-            ? deltaForBlock(chromaDelta!, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
-            : chromaDelta!);
-        }
-        const blockDelta = chromaDeltaCache.get(key) ?? chromaDelta!;
-
-        const [dy, dx] = zigzagIndexTo2d(zigzagIdx);
-        const coeffIdx = dy * 8 + dx;
-        const c = qCoeffs[coeffIdx];
-        const [bit, margin] = qimDetectWithMargin(c, blockDelta);
+      for (const { channel, sbRow, sbCol } of chromaStream) {
+        const value = readChromaSuperblockScalar(planes[channel], width, sbRow, sbCol);
+        const [bit, margin] = qimDetectWithMargin(value, chromaDelta!);
         rawBits.push(bit);
         margins.push(margin);
       }
@@ -875,13 +821,13 @@ export function getQimCapacityBytes(
   const blocksX = Math.floor(width / 8);
   let totalCoeffs = blocksY * blocksX * AC_INDICES.length;
 
-  // Mirrors embedQim exactly: chroma slots (§10.4) add to total capacity
-  // whenever the profile enables them.
+  // Mirrors embedQim exactly: chroma slots (§10.4, scalar-per-block scheme
+  // per §11 second addendum) add one bit per super-block per channel.
   const chromaChannels = options?.chromaChannels ?? [];
   if (options?.chromaDelta !== undefined && chromaChannels.length > 0) {
     const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);
     const superBlocksX = Math.floor(width / CHROMA_SUPERBLOCK_PX);
-    totalCoeffs += superBlocksY * superBlocksX * AC_INDICES.length * chromaChannels.length;
+    totalCoeffs += superBlocksY * superBlocksX * chromaChannels.length;
   }
 
   const totalBitsAvailable = Math.floor(totalCoeffs / repeat);

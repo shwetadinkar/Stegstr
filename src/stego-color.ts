@@ -1,6 +1,6 @@
 /**
- * RGB <-> YCbCr conversion and chroma super-block downsample/upsample for
- * chroma-channel QIM embedding (HANDOFF.md §10.4).
+ * RGB <-> YCbCr conversion and chroma super-block read/write for
+ * chroma-channel QIM embedding (HANDOFF.md §10.4, §11 second addendum).
  *
  * The real JPEG encoder subsamples chroma 2x2 before its own DCT (verified
  * empirically against @napi-rs/canvas: a chroma pattern at the Nyquist
@@ -8,16 +8,32 @@
  * means one chroma DCT block covers a 16x16 region of the source image, not
  * 8x8 like luma.
  *
- * The trick that avoids needing to know the encoder's exact subsampling
- * filter: write the target chroma value as a flat, piecewise-constant 2x2
- * tile across the whole 16x16 super-block. Any reasonable local-averaging
- * filter applied to an already-constant region just reads the constant back
- * out, so the encoder's specific filter (box, triangle, whatever a given
- * browser uses) doesn't matter.
+ * First design attempt embedded multiple DCT-AC coefficients per super-block
+ * (mirroring the luma scheme) and failed on real photos: a block with real
+ * AC content is not spatially flat, and JPEG decoders reconstruct chroma
+ * with smooth ("fancy") upsampling that blends continuously across the whole
+ * image, not respecting any 8x8-block distinction in the reduced-resolution
+ * chroma plane. That blending corrupted the fine structure the DCT scheme
+ * depended on (measured 4-8% raw bit-error rate on real photos, worsening
+ * with delta, not improving -- the signature of a spatial-domain mismatch,
+ * not a lattice-margin problem).
+ *
+ * This version embeds exactly ONE scalar value per super-block per channel,
+ * written as a flat, uniform 16x16 patch (survives the encoder's
+ * subsampling for the same reason a flat 2x2 tile does -- an
+ * already-constant region reduces any reasonable local-averaging filter to
+ * reading the constant back out), and READ from the block's safe interior
+ * (avoiding roughly the outer 2px on each edge, where the decoder's smooth
+ * upsampling blends toward neighbouring blocks -- verified empirically).
+ * Costs capacity (1 bit/block/channel instead of 24) but this is the
+ * scenario already verified to survive a real encode/decode round trip.
  */
 
 const SUPERBLOCK = 16;
-const SUBSAMPLE = 2;
+/** Pixels excluded from each edge when reading a block's scalar value, to
+ *  stay clear of the decoder's cross-block chroma smoothing (observed to
+ *  reach roughly 2px in from a block boundary; this leaves a 4px margin). */
+const SAFE_MARGIN = 4;
 
 /** Standard JFIF/BT.601 coefficients, matching rgbToY in stego-qim.ts. */
 export function rgbToYCbCr(r: number, g: number, b: number): [number, number, number] {
@@ -59,56 +75,46 @@ export function extractChromaPlanes(
 }
 
 /**
- * Downsample a 16x16 super-block of a chroma plane to an 8x8 block by
- * averaging each 2x2 group -- the same operation the real encoder performs
- * before its own chroma DCT.
+ * Read a single representative chroma value for a 16x16 super-block,
+ * averaged over its safe interior only (excludes SAFE_MARGIN px on each
+ * edge). Used both to decide what to embed and, at decode time, to read
+ * back what survived the channel.
  */
-export function downsampleChromaSuperblock(
+export function readChromaSuperblockScalar(
   plane: Float64Array,
   planeWidth: number,
   sbRow: number,
   sbCol: number,
-): Float64Array {
-  const out = new Float64Array(64);
-  const startY = sbRow * SUPERBLOCK;
-  const startX = sbCol * SUPERBLOCK;
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const py = startY + r * SUBSAMPLE;
-      const px = startX + c * SUBSAMPLE;
-      const v00 = plane[py * planeWidth + px] ?? 0;
-      const v01 = plane[py * planeWidth + px + 1] ?? 0;
-      const v10 = plane[(py + 1) * planeWidth + px] ?? 0;
-      const v11 = plane[(py + 1) * planeWidth + px + 1] ?? 0;
-      out[r * 8 + c] = (v00 + v01 + v10 + v11) / 4;
+): number {
+  const startY = sbRow * SUPERBLOCK + SAFE_MARGIN;
+  const startX = sbCol * SUPERBLOCK + SAFE_MARGIN;
+  const span = SUPERBLOCK - 2 * SAFE_MARGIN;
+  let sum = 0;
+  for (let r = 0; r < span; r++) {
+    for (let c = 0; c < span; c++) {
+      sum += plane[(startY + r) * planeWidth + (startX + c)] ?? 0;
     }
   }
-  return out;
+  return sum / (span * span);
 }
 
 /**
- * Write an 8x8 block back into a 16x16 super-block of a chroma plane, each
- * value replicated as a flat 2x2 tile. This is what makes the result
- * invariant to the encoder's actual subsampling filter -- see module doc.
+ * Write a single scalar value across an entire 16x16 super-block, flat and
+ * uniform. This is what makes the result invariant to the encoder's actual
+ * subsampling filter -- see module doc.
  */
-export function upsampleChromaSuperblock(
+export function writeChromaSuperblockScalar(
   plane: Float64Array,
   planeWidth: number,
   sbRow: number,
   sbCol: number,
-  block8x8: Float64Array,
+  value: number,
 ): void {
   const startY = sbRow * SUPERBLOCK;
   const startX = sbCol * SUPERBLOCK;
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const v = block8x8[r * 8 + c];
-      const py = startY + r * SUBSAMPLE;
-      const px = startX + c * SUBSAMPLE;
-      plane[py * planeWidth + px] = v;
-      plane[py * planeWidth + px + 1] = v;
-      plane[(py + 1) * planeWidth + px] = v;
-      plane[(py + 1) * planeWidth + px + 1] = v;
+  for (let r = 0; r < SUPERBLOCK; r++) {
+    for (let c = 0; c < SUPERBLOCK; c++) {
+      plane[(startY + r) * planeWidth + (startX + c)] = value;
     }
   }
 }

@@ -39,39 +39,15 @@ const Q50_LUMINANCE: ReadonlyArray<number> = [
 ];
 
 /**
- * Standard JPEG chrominance quantization table (IJG Annex K, Table K.2),
- * quality-50 baseline. Distinct from the luminance table -- even at the same
- * nominal quality, standard JPEG encoders quantize Cb/Cr with a coarser
- * table than Y. Needed to match the real encoder's chroma DCT lattice for
- * chroma-channel embedding (see stego-adaptive.ts §10.4 in HANDOFF.md).
- */
-const Q50_CHROMINANCE: ReadonlyArray<number> = [
-  17, 18, 24, 47, 99, 99, 99, 99,
-  18, 21, 26, 66, 99, 99, 99, 99,
-  24, 26, 56, 99, 99, 99, 99, 99,
-  47, 66, 99, 99, 99, 99, 99, 99,
-  99, 99, 99, 99, 99, 99, 99, 99,
-  99, 99, 99, 99, 99, 99, 99, 99,
-  99, 99, 99, 99, 99, 99, 99, 99,
-  99, 99, 99, 99, 99, 99, 99, 99,
-];
-
-/**
  * Compute a JPEG quantization table scaled by the given quality factor.
  * quality in [1..100]. 50 yields the standard table. Lower = more compression.
- * channel selects luminance (default, every existing call site) or
- * chrominance (Table K.2, coarser at the same quality).
  */
-export function quantizationTable(
-  quality: number,
-  channel: "luma" | "chroma" = "luma",
-): Float64Array {
+export function quantizationTable(quality: number): Float64Array {
   const q = Math.max(1, Math.min(100, quality));
   const scale = q < 50 ? 5000 / q : 200 - 2 * q;
-  const base = channel === "chroma" ? Q50_CHROMINANCE : Q50_LUMINANCE;
   const table = new Float64Array(64);
   for (let i = 0; i < 64; i++) {
-    table[i] = Math.max(1, Math.floor((base[i] * scale + 50) / 100));
+    table[i] = Math.max(1, Math.floor((Q50_LUMINANCE[i] * scale + 50) / 100));
   }
   return table;
 }
