@@ -114,11 +114,17 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     width: 1600, square: false, delta: 28,
     note: "Caps around 1920px. Measured 0.25-0.53% BER at 1600.",
   },
+  // Zigzag-restricted by default (§13.5). Chroma was removed here: measured on
+  // real photos it tints flat regions visibly (§12.4) and is worse than luma
+  // alone at any payload big enough to matter. The lowest 6 AC positions
+  // measured strictly better than the full 24 at the same delta -- 4000 B
+  // survives here and does not at 24 positions -- so the restriction is now
+  // the default rather than an experiment. Images made by earlier versions
+  // still decode: decodeQimImageFile sweeps chroma and full-band candidates.
   instagram: {
-    width: 1440, square: true, delta: 56,
-    chromaDelta: 28, chromaChannels: ["cb", "cr"], rsNsym: 32,
-    note: "1440x1440 square, larger step. Instagram sharpens; 28 and 40 did not survive, 56 did. "
-      + "Chroma channel carries payload first (invisible), luma only for overflow -- §10.4, unbracketed on a real device yet.",
+    width: 1440, square: true, delta: 56, lumaAcCount: 6, rsNsym: 32,
+    note: "1440x1440 square, step 56, lowest 6 AC positions. Instagram sharpens; 28 and 40 did not survive, 56 did. "
+      + "Restricting to low frequencies survives re-encode measurably better and makes the capacity estimate honest.",
   },
   facebook: {
     width: 2048, square: false, delta: 28,
@@ -219,9 +225,9 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
    * survives the others with room to spare.
    */
   universal: {
-    width: 1440, square: true, delta: 56,
-    chromaDelta: 28, chromaChannels: ["cb", "cr"], rsNsym: 32,
-    note: "Square 1440 at Instagram's step size. Survives WhatsApp, Telegram and Instagram.",
+    width: 1440, square: true, delta: 56, lumaAcCount: 6, rsNsym: 32,
+    note: "Square 1440 at Instagram's step size, lowest 6 AC positions. Survives WhatsApp, Telegram and Instagram. "
+      + "Carries less than the old full-band setting claimed to, but delivers what it reports.",
   },
   none: {
     width: 0, square: false, delta: 20,

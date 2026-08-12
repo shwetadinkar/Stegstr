@@ -889,8 +889,20 @@ export async function detectQim(
       try {
         return pako.inflate(extractedPayload);
       } catch {
-        // If decompression fails, try returning raw (maybe it wasn't compressed)
-        return extractedPayload;
+        // Inflate failing means these bytes are corrupt: MAGIC and the length
+        // header are only the first 11 bytes and can survive RS correction
+        // while the payload behind them does not.
+        //
+        // This used to return the still-deflated bytes instead, which was
+        // wrong twice over. It reported success carrying garbage, and because
+        // deflate EXPANDS incompressible input (AES-GCM output) by ~11 bytes,
+        // the caller saw a payload of the compressed length -- surfacing as
+        // "Self-test length mismatch: expected 1930, got 1941", which reads
+        // like a framing bug rather than the corruption it actually is. It
+        // also stopped decodeQimImageFile's blind sweep dead: the loop breaks
+        // on any non-empty result, so a garbage return prevented the
+        // remaining delta candidates from ever being tried.
+        return null;
       }
     }
     return extractedPayload;
@@ -932,6 +944,30 @@ function maxRawForCodewordBudget(maxCodewordLen: number, nsym: number): number {
  * Compute the maximum payload size (in bytes) that can be embedded
  * in an image of the given dimensions.
  */
+/**
+ * Luma AC positions that survive a re-encode, measured — not how many are
+ * written to.
+ *
+ * The capacity formula counts every embedding slot as usable. That is true of
+ * the DCT grid and false of the channel: the higher-frequency AC positions do
+ * not survive a quality-75 re-encode, so bits placed there are lost even
+ * though they were counted, and the reported capacity becomes a number the
+ * encoder cannot deliver.
+ *
+ * Measured on a real photo at delta 56 (same cover, same geometry, only the
+ * AC band differing):
+ *
+ *   24 positions   reported 9641 B   PASS at 1930 B   FAIL at 4000 B
+ *    6 positions   reported 4226 B   PASS at 1930 B   PASS at 4000 B
+ *
+ * The restricted profile delivers ~95% of what it promises; the full-band one
+ * under half. So capacity is estimated over the reliable band only. Embedding
+ * still writes every position the profile asks for -- the extra positions
+ * become redundancy rather than promised capacity, which is the honest way
+ * round.
+ */
+const RELIABLE_LUMA_AC = 6;
+
 export function getQimCapacityBytes(
   width: number,
   height: number,
@@ -939,7 +975,10 @@ export function getQimCapacityBytes(
 ): number {
   const repeat = options?.repeat ?? QIM_REPEAT;
   const rsNsym = options?.rsNsym ?? QIM_RS_NSYM;
-  const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
+  const lumaAcCount = Math.min(
+    options?.lumaAcCount ?? AC_INDICES.length,
+    RELIABLE_LUMA_AC,
+  );
 
   const blocksY = Math.floor(height / 8);
   const blocksX = Math.floor(width / 8);

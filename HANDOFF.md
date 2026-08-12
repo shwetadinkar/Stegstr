@@ -1066,3 +1066,97 @@ too).
    and option 2 (zigzag) showed no visible improvement pre-platform.
 3. Consider per-event content truncation for own notes (§13.2 gap).
 4. Everything from §12.5 is unchanged and still open.
+
+### 13.5 Seventh addendum — the capacity number was lying, and two bugs it hid
+
+Continued app testing after §13.4. Four more real bugs, and a measurement that
+changed the default profile.
+
+**"Add to my feed" was still broken — one filter further down.** §13.3 fixed
+`importedEventIds`, but the Following tab applies a second test:
+`contactsSet.has(authorPk)`. You do not follow yourself, so your own notes --
+including the one just imported from an image -- were filtered out whenever
+that tab was active. This is why it looked intermittent ("rectified in a few
+cases, still there in most"): it depended on the active tab, not the note. Own
+notes and anything in `importedEventIds` now pass regardless of tab. Worth
+noting the shape repeated a third time: an own-note exception missing from a
+filter written with only other people's content in mind.
+
+**The auto-shrink search shipped empty images.** §13.2's binary search had a
+floor of 0, and an empty bundle -- a bare encryption envelope of a few hundred
+bytes -- always passes self-test. So when nothing fit, the search "succeeded"
+at zero events and downloaded an image carrying nothing, which then decoded
+perfectly and reported `0 new items`. The fix that was supposed to stop
+shipping broken images was instead shipping empty ones. Floor is now 1.
+
+**`detectQim` returned corrupt data as success.** On `pako.inflate` failure it
+returned the still-deflated bytes with a comment guessing "maybe it wasn't
+compressed". Two consequences. Deflate *expands* incompressible input
+(AES-GCM output) by ~11 bytes, so the caller saw a payload of the compressed
+length -- surfacing as `Self-test length mismatch: expected 1930, got 1941`,
+which reads like a framing bug and is actually plain corruption wearing a
+disguise. Worse, `decodeQimImageFile`'s blind sweep breaks on any non-empty
+result, so a garbage return stopped the remaining delta candidates from ever
+being tried. Now returns null. Nothing in the app embeds uncompressed, so the
+backward-compatibility case the fallback existed for does not arise.
+
+**Over-long single notes are now carried shortened rather than dropped.**
+Whole-event trimming cannot help when one note is itself too big. Content is
+covered by the event id and `sig`, so a cut note has to be re-signed -- fine
+for the user's own notes (we hold the key, and `buildBundle` already re-signs
+synthetic events), impossible for anyone else's. Re-signing someone else's
+altered words under a different key would attribute text to them they never
+wrote, so other authors' notes are still dropped whole. `truncate-resign.test.ts`
+pins all three halves of this, including that an un-re-signed cut note really
+does fail `verifyEvent`.
+
+**The measurement: reported capacity was ~2.4x what the encoder could
+deliver.** Same cover, same geometry, same delta 56, only the AC band
+differing:
+
+```
+  24 AC positions   reported 9641 B   PASS at 1930 B   FAIL at 4000 B
+   6 AC positions   reported 4226 B   PASS at 1930 B   PASS at 4000 B
+```
+
+The capacity formula counted every embedding slot as usable. True of the DCT
+grid, false of the channel: high-frequency AC positions do not survive a
+quality-75 re-encode, so bits placed there were counted and then lost. This is
+what "capacity says 9 KB but only 170 characters fit" actually was -- not a
+packing bug, a promise the encoder could not keep, with the self-test shrink
+loop quietly absorbing the difference. `getQimCapacityBytes` now estimates
+over the reliable band (`RELIABLE_LUMA_AC = 6`) regardless of how many
+positions are written; the extra positions become redundancy rather than
+advertised space.
+
+**Consequence: zigzag restriction is now the default, not an experiment.**
+`instagram` and `universal` moved to `lumaAcCount: 6, rsNsym: 32`, and chroma
+was dropped from both -- §12.4 measured it tinting flat regions visibly, and
+it is worse than luma alone at any payload big enough to matter. Old images
+still decode; `decodeQimImageFile` sweeps chroma and full-band candidates.
+
+This reverses §13.1's reading. Restriction showed no *visual* improvement by
+eye, and that was recorded as evidence against it -- but the hypothesis it was
+built on was about *survival*, and on survival it wins clearly. The two
+questions were being answered with the wrong measurement.
+
+**Honest limit of the new number.** 4226 B is still optimistic at the very
+top: 3200 B passes on repeated payloads, 4000 B is borderline (passes with one
+payload, fails with another). The app budgets at 85% (3592 B) and the
+self-test shrink absorbs the rest, so the shipped path has margin -- but the
+figure shown in the embed modal is the raw one, and a user filling it exactly
+would be relying on the shrink loop rather than the estimate.
+
+### 13.6 Current status
+
+**183 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+1. **Real-phone Instagram testing** -- unchanged as the priority, now against
+   a default profile that is measured rather than assumed.
+2. Consider deriving `RELIABLE_LUMA_AC` from measurement across several
+   covers rather than one photo; 6 is where the bracket ladder happened to
+   sit, not a value anything searched for.
+3. Truncation currently only fires for a single over-long note at the head of
+   the selection. A mixed feed whose *last* fitting event is over-long still
+   drops it whole.
+4. Everything from §12.5 and §13.4 is unchanged and still open.

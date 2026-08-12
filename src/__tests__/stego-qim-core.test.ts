@@ -199,13 +199,24 @@ describe("getQimCapacityBytes", () => {
 
   it("typical 1080px image has enough capacity for small payloads", () => {
     const cap = getQimCapacityBytes(1080, 720);
-    // Reed-Solomon parity cost scales with the number of 255-byte chunks a
-    // message needs, not a flat nsym once -- a message spanning many chunks
-    // pays nsym bytes of parity per chunk (up to ~half the codeword at
-    // nsym=128). The old flat-overhead formula silently overstated capacity
-    // for anything needing more than one chunk (>127 bytes at nsym=128);
-    // 3565 is what this geometry actually, verifiably holds.
-    expect(cap).toBeGreaterThan(3000);
+    // Two corrections live in this number, both of which used to make it
+    // bigger than the encoder could deliver.
+    //
+    // 1. Reed-Solomon parity is a per-chunk cost, not a flat nsym once: a
+    //    message spanning many 255-byte chunks pays nsym bytes of parity per
+    //    chunk (~half the codeword at nsym=128). The old flat-overhead
+    //    formula overstated anything past one chunk.
+    // 2. Only the lowest AC positions survive a re-encode, so capacity is
+    //    estimated over the reliable band rather than all 24 written
+    //    positions (§13.5 -- measured: 24 positions promised 9641 B on a real
+    //    photo and failed self-test at 4000 B; 6 positions promised 4226 B
+    //    and passed).
+    //
+    // 878 B is what this geometry holds at the default nsym=128. Every
+    // shipped lossy profile sets rsNsym: 32, which takes the same geometry to
+    // 1553 B. Small, but deliverable -- the point of the change.
+    expect(cap).toBeGreaterThan(800);
+    expect(getQimCapacityBytes(1080, 720, { rsNsym: 32 })).toBeGreaterThan(1500);
   });
 });
 

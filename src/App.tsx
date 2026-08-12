@@ -40,6 +40,12 @@ import type { NostrEvent, NostrStateBundle, IdentityEntry, View, ProfileData } f
 import "./App.css";
 
 const STEGSTR_BUNDLE_VERSION = 1;
+// Appended to a note whose content had to be cut to fit a cover image, so the
+// reader can tell a shortened note from a complete one.
+const TRUNCATE_MARKER = " […cut to fit image]";
+// Shortest note worth carrying, and the granularity the truncation search
+// converges to. Below this a "note" is barely more than the marker.
+const TRUNCATE_MIN_CHARS = 120;
 const BASE_ANON_KEY = "stegstr_anon_key";
 const BASE_IDENTITIES = "stegstr_identities";
 const BASE_ACTING = "stegstr_acting_identity";
@@ -637,7 +643,13 @@ function App({ profile }: { profile: string | null }) {
       if (reposter && ourPubkeysSet.has(reposter) && !viewingPubkeys.has(reposter) && !importedEventIds.has(item.type === "repost" ? item.repost.id : note.id)) return false;
       if (feedFilter === "following") {
         const authorPk = item.type === "repost" ? item.repost.pubkey : item.note.pubkey;
-        if (!contactsSet.has(authorPk)) return false;
+        // You do not follow yourself, so a bare contactsSet test hides your
+        // own notes -- including the ones you just chose to import from an
+        // image. That made "Add to my feed" look like it did nothing
+        // whenever the Following tab was active, which is the same missing
+        // own-note exception that importedEventIds was added for.
+        const mine = ourPubkeysSet.has(authorPk) || importedEventIds.has(item.note.id);
+        if (!mine && !contactsSet.has(authorPk)) return false;
       }
       return true;
     })
@@ -1712,57 +1724,124 @@ function App({ profile }: { profile: string | null }) {
           // search down to the largest event count that does, instead of
           // just failing and telling the user to go guess a smaller size
           // themselves.
-          type EncodeAttempt = { ok: boolean; n: number; blob?: Blob; encrypted?: Uint8Array; error?: string };
-          const tryEncode = async (n: number): Promise<EncodeAttempt> => {
-            const list = fittedEvents.slice(0, n);
+          type EncodeAttempt = {
+            ok: boolean; n: number; blob?: Blob; error?: string;
+            /** Set when the carried note's content was cut to make it fit. */
+            truncatedTo?: number;
+          };
+          const encodeAndVerify = async (
+            list: NostrEvent[], label: string, extra?: Partial<EncodeAttempt>,
+          ): Promise<EncodeAttempt> => {
             const enc = await encryptEvents(list);
-            setStegoProgress(`Embedding and verifying (${n} event${n === 1 ? "" : "s"})...`);
+            setStegoProgress(`Embedding and verifying (${label})...`);
             let blob: Blob;
             try {
               blob = await encodeQimImageFile(resizedCover, enc, { platform: targetPlatform });
             } catch (e) {
               const error = `encode failed: ${e instanceof Error ? e.message : String(e)}`;
-              addStegoLog(`  ${n} events -> ${error}`);
-              return { ok: false, n, error };
+              addStegoLog(`  ${label} -> ${error}`);
+              return { ok: false, n: list.length, error, ...extra };
             }
             const st = await qimSelfTest(blob, enc);
-            addStegoLog(`  ${n} events -> self-test ${st.ok ? "PASSED" : `FAILED (${st.error})`}`);
-            return st.ok ? { ok: true, n, blob, encrypted: enc } : { ok: false, n, error: st.error };
+            addStegoLog(`  ${label} -> self-test ${st.ok ? "PASSED" : `FAILED (${st.error})`}`);
+            return st.ok
+              ? { ok: true, n: list.length, blob, ...extra }
+              : { ok: false, n: list.length, error: st.error, ...extra };
           };
+          const tryEncode = (n: number) =>
+            encodeAndVerify(fittedEvents.slice(0, n), `${n} event${n === 1 ? "" : "s"}`);
+
+          if (fittedEvents.length === 0) {
+            setDecodeError("There is nothing to embed yet — post a note or follow someone first.");
+            addStegoLog("Embed cancelled: no events selected to carry.");
+            setEmbedding(false);
+            setStegoProgress("");
+            return;
+          }
 
           addStegoLog("Running QIM steganography encode...");
-          let best = await tryEncode(fittedEvents.length);
-          if (!best.ok && fittedEvents.length > 0) {
+          // NOTE: the search floor is 1, not 0. An empty bundle always passes
+          // self-test (it is a bare encryption envelope, a few hundred bytes),
+          // so including 0 in the search made "shrink until it survives"
+          // silently succeed with an image carrying nothing -- it decoded
+          // cleanly and reported "0 new items". An image with no content is a
+          // failure, not a smaller success.
+          let best: EncodeAttempt | null = null;
+          const fullAttempt = await tryEncode(fittedEvents.length);
+          if (fullAttempt.ok) {
+            best = fullAttempt;
+          } else if (fittedEvents.length > 1) {
             addStegoLog("Full selection did not survive self-test; searching for the largest count that does...");
-            let lo = 0, hi = fittedEvents.length - 1;
-            let bestPass: EncodeAttempt | null = null;
-            let zeroAttempt: EncodeAttempt | null = null;
+            let lo = 1, hi = fittedEvents.length - 1;
             while (lo <= hi) {
               const mid = Math.floor((lo + hi) / 2);
               const attempt = await tryEncode(mid);
-              if (mid === 0) zeroAttempt = attempt;
-              if (attempt.ok) { bestPass = attempt; lo = mid + 1; } else { hi = mid - 1; }
+              if (attempt.ok) { best = attempt; lo = mid + 1; } else { hi = mid - 1; }
             }
-            best = bestPass ?? zeroAttempt ?? best;
           }
 
-          if (!best.ok) {
-            // Even an empty bundle (bare encryption envelope, no events)
-            // does not survive read-back on this cover at this delta -- that
-            // rules out payload size as the cause. It's the cover image
-            // itself (usually too flat/low-texture) or the platform target.
-            setDecodeError(
-              `This cover image cannot reliably carry any payload at the ${targetPlatform} settings ` +
-              `(${best.error}). Try a different, more textured photo, or the Dot method.`,
+          // Fallback: a single note too long for the cover. Rather than
+          // carrying nothing, carry as much of it as fits. Only for notes we
+          // can re-sign -- content is covered by the event id and signature,
+          // so a cut note has to be re-signed with the author's key or it
+          // fails verifyEvent on the far side. That is fine for the user's own
+          // notes and impossible for anyone else's; re-signing someone else's
+          // altered words under a different key would attribute text to them
+          // they never wrote, so those are left whole and simply dropped.
+          if (!best) {
+            const head = fittedEvents[0];
+            const ownIdentity = head && identities.find(
+              (i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex)) === head.pubkey,
             );
-            addStegoLog("Embed cancelled: no payload size survives self-test on this cover.");
+            if (head && head.kind === 1 && ownIdentity && head.content.length > TRUNCATE_MIN_CHARS) {
+              addStegoLog(`No whole-event count fits; trying to carry a shortened copy of your note (${head.content.length} chars)...`);
+              const sk = Nostr.hexToBytes(ownIdentity.privKeyHex);
+              const tryTruncated = async (chars: number): Promise<EncodeAttempt> => {
+                const content = head.content.slice(0, chars).trimEnd() + TRUNCATE_MARKER;
+                const ev = await Nostr.finishEventAsync(
+                  { kind: head.kind, content, tags: head.tags, created_at: head.created_at },
+                  sk,
+                ) as NostrEvent;
+                return encodeAndVerify([ev], `note cut to ${chars} chars`, { truncatedTo: chars });
+              };
+              // `hi` is already known to fail (that was the whole-note
+              // attempt), `lo` is the shortest worth carrying. Converging to
+              // within TRUNCATE_MIN_CHARS keeps this to ~6 encodes rather
+              // than one per character.
+              let lo = TRUNCATE_MIN_CHARS, hi = head.content.length;
+              const first = await tryTruncated(lo);
+              if (first.ok) {
+                best = first;
+                while (hi - lo > TRUNCATE_MIN_CHARS) {
+                  const mid = Math.floor((lo + hi) / 2);
+                  const attempt = await tryTruncated(mid);
+                  if (attempt.ok) { best = attempt; lo = mid; } else { hi = mid; }
+                }
+              }
+            }
+          }
+
+          if (!best) {
+            // Nothing survives read-back on this cover -- not the full
+            // selection, not a single event, not even a shortened note. Size
+            // is ruled out, so it is the cover (too flat to hide data in) or
+            // the platform step size.
+            setDecodeError(
+              `This cover image cannot reliably carry your feed at the ${targetPlatform} settings ` +
+              `(${fullAttempt.error}). Try a larger or more textured photo, a platform with a bigger ` +
+              `canvas, or the Dot method.`,
+            );
+            addStegoLog("Embed cancelled: nothing survives self-test on this cover.");
             setEmbedding(false);
             setStegoProgress("");
             return;
           }
           const blob = best.blob!;
           addStegoLog(`QIM encode complete! Output: ${blob.size} bytes JPEG`);
-          if (best.n < fittedEvents.length) {
+          if (best.truncatedTo !== undefined) {
+            addStegoLog(`Carrying 1 note, shortened to ${best.truncatedTo} of ${fittedEvents[0].content.length} characters to fit.`);
+            setStatus(`Note was too long for this image — carried the first ${best.truncatedTo} characters.`);
+          } else if (best.n < fittedEvents.length) {
             addStegoLog(`Self-test required trimming to ${best.n}/${fittedEvents.length} events to survive reliably.`);
           } else {
             addStegoLog("Self-test PASSED! Payload survives encode/decode round-trip.");
