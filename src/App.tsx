@@ -1748,6 +1748,8 @@ function App({ profile }: { profile: string | null }) {
             ok: boolean; n: number; blob?: Blob; error?: string;
             /** Set when the carried note's content was cut to make it fit. */
             truncatedTo?: number;
+            /** Length of that note before it was cut, for the summary line. */
+            originalChars?: number;
           };
           const encodeAndVerify = async (
             list: NostrEvent[], label: string, extra?: Partial<EncodeAttempt>,
@@ -1844,7 +1846,9 @@ function App({ profile }: { profile: string | null }) {
                   { kind: head.kind, content, tags: head.tags, created_at: head.created_at },
                   sk,
                 ) as NostrEvent;
-                return encodeAndVerify([ev], `note cut to ${chars} chars`, { truncatedTo: chars });
+                return encodeAndVerify([ev], `note cut to ${chars} chars`, {
+                  truncatedTo: chars, originalChars: head.content.length,
+                });
               };
               // `hi` is already known to fail (that was the whole-note
               // attempt), `lo` is the shortest worth carrying. Converging to
@@ -1882,7 +1886,7 @@ function App({ profile }: { profile: string | null }) {
           const blob = best.blob!;
           addStegoLog(`QIM encode complete! Output: ${blob.size} bytes JPEG`);
           if (best.truncatedTo !== undefined) {
-            addStegoLog(`Carrying 1 note, shortened to ${best.truncatedTo} of ${fittedEvents[0].content.length} characters to fit.`);
+            addStegoLog(`Carrying 1 note, shortened to ${best.truncatedTo} of ${best.originalChars ?? "?"} characters to fit.`);
             setStatus(`Note was too long for this image — carried the first ${best.truncatedTo} characters.`);
           } else if (best.n < fittedEvents.length) {
             addStegoLog(`Self-test required trimming to ${best.n}/${fittedEvents.length} events to survive reliably.`);
