@@ -199,8 +199,13 @@ describe("getQimCapacityBytes", () => {
 
   it("typical 1080px image has enough capacity for small payloads", () => {
     const cap = getQimCapacityBytes(1080, 720);
-    // Should hold at least 5KB for typical Nostr bundles
-    expect(cap).toBeGreaterThan(5000);
+    // Reed-Solomon parity cost scales with the number of 255-byte chunks a
+    // message needs, not a flat nsym once -- a message spanning many chunks
+    // pays nsym bytes of parity per chunk (up to ~half the codeword at
+    // nsym=128). The old flat-overhead formula silently overstated capacity
+    // for anything needing more than one chunk (>127 bytes at nsym=128);
+    // 3565 is what this geometry actually, verifiably holds.
+    expect(cap).toBeGreaterThan(3000);
   });
 });
 

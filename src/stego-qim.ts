@@ -806,6 +806,34 @@ export async function detectQim(
 }
 
 /**
+ * Largest raw message (MAGIC + LENGTH_BYTES + payload) whose RS codeword
+ * (message plus per-chunk parity, chunked at 255-nsym data bytes per chunk
+ * -- see RSCodec.encode in reed-solomon.ts) fits within maxCodewordLen bytes.
+ *
+ * RS parity cost scales with the NUMBER of chunks, not a flat nsym once: a
+ * message needing many chunks pays nsym bytes of parity per chunk, which for
+ * nsym=128 is nearly half the codeword. A flat "subtract nsym once" capacity
+ * estimate is only correct for messages that fit in a single chunk (<=127
+ * bytes at nsym=128) and silently overstates capacity for anything larger --
+ * exactly the gap that let packForCapacity select more than embedQim could
+ * actually fit, which then correctly threw "Payload too large" rather than
+ * producing a broken file.
+ */
+function maxRawForCodewordBudget(maxCodewordLen: number, nsym: number): number {
+  const maxChunkData = 255 - nsym;
+  if (maxCodewordLen <= 0 || maxChunkData <= 0) return 0;
+  let lo = 0;
+  let hi = maxCodewordLen; // codewordLen(raw) >= raw always, so this is a safe upper bound
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi + 1) / 2);
+    const chunks = Math.ceil(mid / maxChunkData);
+    const codewordLen = mid + nsym * chunks;
+    if (codewordLen <= maxCodewordLen) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
  * Compute the maximum payload size (in bytes) that can be embedded
  * in an image of the given dimensions.
  */
@@ -833,9 +861,9 @@ export function getQimCapacityBytes(
   const totalBitsAvailable = Math.floor(totalCoeffs / repeat);
   const totalBytesAvailable = Math.floor(totalBitsAvailable / 8);
 
-  // Subtract overhead: 2-byte codeword length + RS parity + MAGIC + LENGTH_BYTES
-  const overhead = 2 + rsNsym + MAGIC_LEN + LENGTH_BYTES;
-  return Math.max(0, totalBytesAvailable - overhead);
+  const maxCodewordLen = totalBytesAvailable - 2; // 2-byte codeword length prefix
+  const maxRaw = maxRawForCodewordBudget(maxCodewordLen, rsNsym);
+  return Math.max(0, maxRaw - MAGIC_LEN - LENGTH_BYTES);
 }
 
 /**
