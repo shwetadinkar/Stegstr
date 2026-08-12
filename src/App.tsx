@@ -495,15 +495,16 @@ function App({ profile }: { profile: string | null }) {
   const rootNotes = notes
     .filter((n) => {
       const eTag = n.tags.find((t) => t[0] === "e");
-      // Explicitly importing a note from an image overrides an earlier
-      // deletion. Deleting a note only adds a kind-5 tombstone -- the note
-      // itself stays in `events` -- so without this exception a note you once
-      // deleted can never be recovered: the decode review still offers it as
-      // new (its id is gone from nothing), you accept it, and it is filtered
-      // straight back out with no message. Accepting it in the review is a
-      // deliberate "put this back".
-      const suppressed = deletedNoteIds.has(n.id) && !importedEventIds.has(n.id);
-      return (!eTag || !noteIds.has(eTag[1])) && !suppressed;
+      // Deletion is decided solely by the kind-5 tombstones in `events`.
+      //
+      // This briefly also exempted anything in importedEventIds, to let a
+      // deleted note be restored from an image -- but that set is populated
+      // with EVERY event of EVERY decoded image, accepted or not, so any note
+      // that had ever appeared in one became permanently undeletable. Restoring
+      // is handled where it belongs instead: accepting a note in the decode
+      // review drops its tombstone (see onAccept), which is a real un-delete
+      // rather than a filter that argues with one.
+      return (!eTag || !noteIds.has(eTag[1])) && !deletedNoteIds.has(n.id);
     });
   const getRepliesTo = (noteId: string) =>
     notes.filter((n) => n.tags.find((t) => t[0] === "e" && t[1] === noteId));
@@ -1238,13 +1239,24 @@ function App({ profile }: { profile: string | null }) {
         // previous code merged everything unconditionally and reported only a
         // count, so the user never saw what an image actually contained.
         const knownIds = new Set(events.map((ev) => ev.id));
+        // Derived from the same `events` snapshot as knownIds, so the two
+        // always agree. A note you deleted is still physically present (delete
+        // writes a kind-5 tombstone and keeps the note), but it is not one you
+        // "already have" in any sense the user would recognise -- counting it
+        // as a duplicate would hide it from the review and make restoring it
+        // from an image impossible.
+        const tombstonedIds = new Set(
+          events
+            .filter((e) => e.kind === 5 && selfPubkeys.includes(e.pubkey))
+            .flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])),
+        );
         const classified: DetectedEvent[] = normalized.map((ev) => ({
           ...ev,
           verified: verifyEvent(ev as never),
           // Own notes count as trusted: re-importing your own feed from an
           // image you made should not require ticking each item.
           followed: contactsSet.has(ev.pubkey) || viewingPubkeys.has(ev.pubkey),
-          duplicate: knownIds.has(ev.id),
+          duplicate: knownIds.has(ev.id) && !tombstonedIds.has(ev.id),
         }));
         const badCount = classified.filter((ev) => !ev.verified).length;
         if (badCount > 0) {
@@ -3000,7 +3012,21 @@ function App({ profile }: { profile: string | null }) {
             const chosen = new Set(ids);
             const accepted = detectReview.events.filter((e) => chosen.has(e.id));
             setEvents((prev) => {
-              const byId = new Map(prev.map((e) => [e.id, e]));
+              // Accepting a note you had previously deleted is an explicit
+              // "put this back", so drop your own kind-5 tombstone for it.
+              // Removing the tombstone genuinely un-deletes the note and
+              // leaves Delete working normally afterwards -- an exception in
+              // the display filter instead would have to argue with the
+              // tombstone forever, and would make the note undeletable.
+              const acceptedIds = new Set(accepted.map((e) => e.id));
+              const withoutTombstones = prev.filter(
+                (e) => !(
+                  e.kind === 5 &&
+                  selfPubkeys.includes(e.pubkey) &&
+                  e.tags.some((t) => t[0] === "e" && acceptedIds.has(t[1]))
+                ),
+              );
+              const byId = new Map(withoutTombstones.map((e) => [e.id, e]));
               accepted.forEach((e) => byId.set(e.id, e as NostrEvent));
               return Array.from(byId.values()).sort((a, b) => b.created_at - a.created_at);
             });

@@ -1201,3 +1201,31 @@ with `lumaAcCount` set, which silently stopped covering `instagram` and
 `universal` once §13.5 gave them that field.
 
 **185 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+### 13.8 Ninth addendum — the delete fix broke delete
+
+§13.7's restore-a-deleted-note fix made every note that had ever appeared in
+a decoded image permanently undeletable. `importedEventIds` is populated with
+EVERY event of EVERY decoded image, accepted or not -- it exists so the feed
+will display your own notes at all -- and the new deletion override read that
+same set as "the user explicitly chose to restore this". Two meanings, one
+set: the tombstone was written and immediately overridden, so Delete did
+nothing.
+
+Fixed by putting the restore where it belongs. Deletion is decided solely by
+kind-5 tombstones again, and accepting a note in the decode review *removes*
+its tombstone -- a real un-delete, after which Delete works normally. A filter
+exception would have had to argue with the tombstone forever.
+
+Closing that loop needed one more change: a deleted note is still physically
+in `events` (delete keeps the note and adds a tombstone), so the review modal
+counted it as "already had" and never offered it, making the restore path
+unreachable. Tombstoned ids are no longer treated as duplicates, derived from
+the same `events` snapshot as `knownIds` so the two cannot disagree.
+
+The recurring lesson, now three instances deep: state that answers "where did
+this come from" is not the same as state that answers "what does the user want
+done with it", and reusing one for the other has broken a different feature
+each time.
+
+**185 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
