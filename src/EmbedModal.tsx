@@ -15,7 +15,8 @@ export type StegoMethod = "qim" | "dot";
 const PLATFORM_LABELS: Record<string, string> = {
   whatsapp_standard: "WhatsApp (1600px, HD included)",
   whatsapp_hd: "WhatsApp HD (1600px)",
-  telegram_photo: "Telegram, as photo (1600px)",
+  telegram_photo: "Telegram, as photo (1920px)",
+  telegram_photo_1600: "Telegram test - as photo at 1600px",
   telegram_file: "Telegram, as file (no resize, biggest capacity)",
   instagram: "Instagram (1440 square)",
   facebook: "Facebook (2048px)",

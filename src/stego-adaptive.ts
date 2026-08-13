@@ -114,9 +114,31 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     width: 1600, square: false, delta: 28,
     note: "Alias of whatsapp_standard -- HD uploads cap at the same 1600px.",
   },
+  // 1920, Telegram's actual cap. The previous 1600 was not Telegram's limit --
+  // it was WhatsApp's, carried over from the attempt to ship one uniform size
+  // for every platform. `universal` still exists for that job; there is no
+  // reason for a Telegram-only profile to pay WhatsApp's cap.
+  //
+  // Going up helps twice for the same reason (§15.7): 1920x1440 is 1.44x the
+  // blocks of 1600x1200, so the same message gets 1.44x the capacity AND is
+  // spread over 1.44x more of the frame, which measurably reduces how much of
+  // the picture is touched. Bigger cover, quieter image.
+  //
+  // NOT yet verified end-to-end. §1 records "caps around 1920" as the
+  // believed limit and 1600x1200 as the geometry actually observed coming back
+  // unchanged. If Telegram resamples at 1920 the payload is destroyed outright
+  // rather than degraded, which is how every geometry failure in this project
+  // has presented. telegram_photo_1600 below keeps the measured configuration.
   telegram_photo: {
+    width: 1920, square: false, delta: 28,
+    note: "1920px, Telegram's own cap. More capacity and a quieter image than 1600. "
+      + "Untested at 1920 -- if a Telegram send comes back resized, use the 1600 test profile.",
+  },
+  // The previously measured configuration, kept as a fallback: 0.25-0.53% BER
+  // at 1600x1200, verified returned unchanged.
+  telegram_photo_1600: {
     width: 1600, square: false, delta: 28,
-    note: "Caps around 1920px. Measured 0.25-0.53% BER at 1600.",
+    note: "Telegram at the measured 1600px. Fallback if 1920 turns out to be resampled.",
   },
   // Zigzag-restricted by default (§13.5). Chroma was removed here: measured on
   // real photos it tints flat regions visibly (§12.4) and is worse than luma

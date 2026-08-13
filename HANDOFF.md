@@ -1420,3 +1420,211 @@ setter is declared without being called, and no state value is written
 without being read (the check that found §13.3).
 
 **186 tests passing**, `tsc --noEmit` clean, `npm run build` clean.
+
+## 15. First real-platform pass, and a texture experiment that failed
+
+2026-08-13. The first Round 1 upload was run, and an attempt to reduce the
+visible artifact was built, measured and **rejected**. The code is back at
+`99312e4`; nothing in this section is in the shipped build. It is recorded so
+the same ground is not re-explored from scratch.
+
+### 15.1 WhatsApp: PASS
+
+`universal` -> WhatsApp (normal) -> download -> decode. **PASS.**
+
+This is not the project's first real-platform test. The day-1 calibration
+round-tripped test images through real WhatsApp, Telegram and Instagram on an
+Android phone, and that is where the per-platform sizes, the delta-26 threshold
+and the BER figures in §4.1 come from. What was new here is that the profile
+restructure of 2026-08-12 (§14.2) -- the rebuilt `universal`, the 6-position
+zigzag restriction, rsNsym 32 -- had not itself been through a platform. It has
+now.
+
+```
+uploaded   254 KB   1600x1200        (app output; a later local rebuild made 254139 B)
+returned   229 KB   1600x1200        IMG-20260813-WA0018.jpg
+WhatsApp's re-encode:  PSNR 45.3 dB
+carrier coeff drift:   p50 0.35   p90 1.01   p99 1.77   p99.9 3.95   max 6.50
+```
+
+Geometry survived exactly, as §4.1 said it would -- WhatsApp caps at 1600 and
+passes anything at or below through untouched. This is the design working, not
+a discovery; the 1600 width and the delta-26 threshold both come from the day-1
+calibration.
+
+### 15.2 The artifact is a single-frequency grating, and small payloads land on the ceiling
+
+Measured on the returned image against a clean resize:
+
+```
+energy in DCT coefficient (0,1) [horizontal]:  43.0%
+energy in DCT coefficient (1,0) [vertical]  :   0.8%
+embedding occupies blocks 0..26046 of 30000
+```
+
+Only **zigzag position 1** is used, spread across 88% of blocks. That is
+AC-major ordering working as designed -- it fills the single most survivable
+frequency across every block before touching the second. The side effect is
+that the perturbation is a coherent 8-pixel vertical grating, which is the
+structure human vision detects best, and it is spread over nearly the whole
+frame rather than concentrated.
+
+Blocks are filled in **raster order**, so a *small* payload lands entirely in
+the top rows:
+
+```
+              top third   middle   bottom
+2000 blocks      20%        0%       0%
+5000 blocks      50%        0%       0%
+26046 blocks    100%      100%      60%
+```
+
+On the test photo the top third is the ceiling. This is the "it filled on the
+ceiling only and looked bad" behaviour, and the cause is simply that block 0 is
+top-left -- not anything to do with texture.
+
+### 15.3 The texture ladder is a no-op on real photos
+
+The headline finding of the session. `blockActivity` reads **quantized zigzag
+25-40**, which at Q75 is *exactly zero for 75% of blocks* (p50=0, p75=0, p90=3).
+With `ACTIVITY_EDGES = [4,12,30,70]`:
+
+```
+rung 0:  27778 blocks (92.6%)  effective delta 12.2
+rung 1:   2185 blocks ( 7.3%)  effective delta 17.8
+rung 2:     37 blocks ( 0.1%)  effective delta 25.6
+rung 3:      0 blocks           35.6
+rung 4:      0 blocks           48.9
+```
+
+Two consequences.
+
+**The adaptation does not adapt.** It applies a near-uniform step, so the
+module header's "2.0x reduction in visible perturbation" does not describe
+behaviour on a real photo. That number presumably came from a synthetic or
+heavily-textured image.
+
+**`universal`'s real average step is ~12.6, not 28.** Because the ladder
+normalises by its *unweighted* mean while 92.6% of blocks sit in the lowest
+rung. So §15.1's WhatsApp pass was achieved at an average step of 12.6 -- less
+than half the nominal 28, and well under the 26 threshold from §4.1 -- with
+repeat-5 and Reed-Solomon absorbing the difference. There is far more
+robustness headroom than the profile advertises. Any future capacity or
+invisibility work should start from this number, not from 28.
+
+### 15.4 What was tried and rejected
+
+**Activity-based block SELECTION** -- choosing which blocks carry bits by
+texture. Measured on the real WhatsApp round trip, activity is 98.9% stable,
+but at a threshold with usable capacity 211 blocks flip sides, and the first
+flip shifts every subsequent bit. It would also cut capacity ~5.5x (18% of
+blocks instead of 88%). This confirms with numbers what the module header
+already said; it needs wet-paper/syndrome coding to be safe. Not built.
+
+**Mid-band texture measure** -- zigzag 10-24 instead of 25-40, to give the
+ladder something to discriminate on. Built as two bracket profiles identical to
+`universal` except for the measure. Result on the real photo, mean |luma
+change| per pixel:
+
+```
+                        ALL      FLAT   TEXTURED
+universal              2.62      1.57      2.96
+universal_tex_mild     3.74      1.65      4.41
+universal_tex_strong   3.65      1.28      4.41
+```
+
+`mild` made flat regions *worse*. `strong` improved flat by 19% but cost 49%
+in textured areas. Judged by eye on a real screen, **both were clearly worse
+than `universal`**, and the direction was abandoned on that basis. Reverted.
+
+The reason both are louder overall is §15.3: they spread blocks properly across
+rungs, so their actual average step is ~25.6 against `universal`'s ~12.6. The
+comparison was never like-for-like -- it was half-strength embedding against
+full-strength. An energy-matched ladder (scaled to ~12.6 average, roughly
+3.1/11.9/26.3) was identified as the only fair version of the experiment and
+was **not** built, since the user had already rejected the direction.
+
+### 15.5 Two traps in the test harness
+
+Both cost time this session and will do so again.
+
+**`encodeQimImageFile` does NOT resize.** The app resizes first and passes
+`resizedCover` (App.tsx). A test that hands it the raw camera file embeds at
+full resolution -- 4096x3072 instead of 1600x1200 -- which spreads the same
+payload over 4x the blocks and is far more forgiving both visually and for
+decode. Always call `resizeCoverForPlatform` first.
+
+**A synthetic cover certified a profile that fails on a real photo.** The
+mid-band profile passed self-test and blind decode on `makeCoverJpeg(...)` and
+failed to decode from itself on the real photo. Anything touching the stego
+core must be checked against the real photo before it is believed.
+
+Related: an unquantized texture measure is unusable, and the reason is
+structural. The encoder measures the cover *before* JPEG encoding, the decoder
+*after*. On raw coefficients the decoder's median mid-band energy is **0.476x**
+the encoder's, so barely half the blocks agree on a rung. Quantizing first
+makes it unbiased (ratio 1.000, 92% agreement). The original design quantized
+for exactly this reason -- only its choice of band was wrong.
+
+### 15.6 Where Round 1 stands
+
+```
+1  universal   -> WhatsApp, normal     PASS   (§15.1)
+2  universal   -> WhatsApp, HD         not run
+3  telegram_photo -> Telegram, as photo  not run (now 1920, see 15.8)
+4  telegram_file -> Telegram, as file  not run
+```
+
+### 15.7 Bigger cover = quieter image, and it favours Telegram
+
+Observed on a real screen: a Telegram-sized (larger) image looks noticeably
+cleaner than the 1600px WhatsApp one at the same payload.
+
+There is a mechanism, and it is the same one behind §15.2. Bits are laid down
+one block at a time, so the fraction of the picture that gets touched depends
+entirely on how many blocks the cover has:
+
+```
+1600x1200  (WhatsApp cap, universal)     30000 blocks   a 600 B payload touches  86.8%
+4096x3072  (telegram_file, no resize)   196608 blocks   a 600 B payload touches  13.2%
+```
+
+Same message, same step size, 6.6x more blocks to hide it in -- so 87% of the
+frame is perturbed on WhatsApp against 13% on a full-resolution Telegram file.
+This was confirmed accidentally: a test run that skipped the platform resize
+(§15.5) produced a 4096x3072 embed that looked clean enough to ask whether it
+was embedded at all. It was, and it decoded.
+
+The consequence is that `telegram_file` is not only the maximum-capacity
+channel (§14.2) but also the most *invisible* one, and the two properties come
+from the same place: no resize. Telegram-as-file is the strongest
+configuration this app has on both criteria simultaneously. It is still
+untested end-to-end (Round 1 test 4).
+
+The corollary is a limit that no amount of encoder tuning removes: at 1600px
+WhatsApp, a ~600 B payload simply needs most of the blocks. Reducing what is
+visible there means reducing how many blocks are needed -- fewer bits (the
+pointer tier, §10.4), or more bits per block -- not a quieter step.
+
+### 15.8 telegram_photo raised to 1920
+
+`telegram_photo` was 1600. That is **WhatsApp's** cap, not Telegram's -- it was
+carried over from an earlier attempt to ship one uniform size for every
+platform. `universal` already does that job, so a Telegram-only profile had no
+reason to pay it.
+
+Now 1920, which §1 records as Telegram's own cap. This helps twice for the
+single reason in §15.7: 1920x1440 has 1.44x the blocks of 1600x1200, so the
+same message gets 1.44x the capacity *and* is spread across 1.44x more of the
+frame. More payload and a quieter picture from one change.
+
+**Not verified end-to-end.** §1 lists "caps around 1920" as the believed limit
+while 1600x1200 is the geometry actually observed returning unchanged. If
+Telegram resamples at 1920 the payload is destroyed outright rather than
+degraded -- that is how every geometry failure in this project has presented
+(~50% BER, total loss). `telegram_photo_1600` keeps the measured configuration
+as a fallback and differs from it in width alone, so a failure at 1920 can be
+attributed to the geometry and nothing else.
+
+Next Telegram upload should use `telegram_photo` at 1920 and check the returned
+image is still 1920 wide before anything else.

@@ -95,6 +95,23 @@ describe("measured platform profiles", () => {
     expect(u.delta).toBeLessThan(PLATFORM_PROFILES.instagram.delta);
   });
 
+  it("telegram_photo uses Telegram's own cap, with the measured 1600 kept as fallback", () => {
+    // 1600 was WhatsApp's cap, carried over from the one-uniform-size attempt.
+    // A Telegram-only profile has no reason to pay it (§15.8).
+    const t = PLATFORM_PROFILES.telegram_photo;
+    const fallback = PLATFORM_PROFILES.telegram_photo_1600;
+    expect(t.width).toBe(1920);
+    expect(fallback.width).toBe(1600);
+    // Same channel, so everything except geometry must match -- otherwise a
+    // failure at 1920 cannot be attributed to the width.
+    expect(t.delta).toBe(fallback.delta);
+    expect(t.square).toBe(fallback.square);
+    expect(t.lumaAcCount).toBe(fallback.lumaAcCount);
+    expect(t.rsNsym).toBe(fallback.rsNsym);
+    // universal must still fit under it, since universal targets both.
+    expect(PLATFORM_PROFILES.universal.width).toBeLessThanOrEqual(t.width);
+  });
+
   it("telegram_file is the lossless maximum-capacity channel", () => {
     // width 0 means no resize, so capacity scales with the cover instead of
     // being capped by a platform's geometry -- the whole point of the profile.
