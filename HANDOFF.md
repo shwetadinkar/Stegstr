@@ -1877,7 +1877,8 @@ of ~19 -- if Telegram's is comparable, delta 28 is more than that channel needs
 and can come down, which reduces the artifact directly. Needs the returned
 file, not the sent one ([[check-the-returned-file]]).
 
-**2. The pointer tier (§10.4).** At 1280x960 the payload size dominates
+**2. The pointer tier (§10.4). — DECIDED: this is where the next session
+starts.** At 1280x960 the payload size dominates
 everything else, and no encoder tuning beats not sending the bytes. Embed a
 nostr event id plus a NIP-44 key (~300 B) and fetch the content from a relay.
 At 300 B with rsNsym 32, Telegram-as-photo would need well under one AC
