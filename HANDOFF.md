@@ -1676,7 +1676,7 @@ have caught this on day 1 and again today.
 1  universal      -> WhatsApp, normal      PASS     returned image verified 1600x1200 (§15.1)
 2  universal      -> WhatsApp, HD          not run
 3  universal      -> Telegram, as photo    FAIL     resized by Telegram, payload destroyed (§15.11)
-3b telegram_photo -> Telegram, as photo    not run  now 1280; this is the test that matters
+3b telegram_photo -> Telegram, as photo    PASS     decodes at 1280 (§15.12) -- but visibly noisier
 4  telegram_file  -> Telegram, as file     PASS     survives because nothing is resized (§15.11)
 ```
 
@@ -1713,3 +1713,58 @@ So Telegram-as-photo is not broken as a channel -- it was being fed the wrong
 size. At 1280 the grid should pass through untouched, exactly as 1600 does on
 WhatsApp. That is test 3b and it is the next thing to run.
 
+
+### 15.12 Telegram-as-photo works at 1280, but is the noisiest channel
+
+Test 3b: `telegram_photo` at 1280 was sent through Telegram, downloaded, and
+**decoded**. Telegram-as-photo is a working channel; 1600 failed only because
+it was the wrong size (§15.11). Geometry matching is confirmed on a second
+platform.
+
+**Open problem: image quality at 1280 is noticeably worse than WhatsApp's.**
+Not a different artifact -- the same grating (§15.2) at much higher density.
+Coefficient positions modified per block, for a 600 B payload:
+
+```
+WhatsApp  1600x1200  rsNsym  32     0.92 AC positions/block   (15% of budget)
+Telegram  1280x960   rsNsym 128     2.51 AC positions/block   (42% of budget)
+Telegram  1280x960   rsNsym  32     1.43 AC positions/block   (24% of budget)
+```
+
+Two causes multiply:
+
+1. **Fewer blocks.** 1280x960 has 19200 blocks against 1600x1200's 30000, so
+   the same message is 1.56x denser. This is §15.7's mechanism running the
+   wrong way, and it is inherent to the channel -- Telegram will not give more
+   pixels.
+2. **`telegram_photo` never had rsNsym set.** It still falls through to the
+   QIM default of 128, spending half of every codeword on parity, while
+   `universal` uses 32. That is 1.75x more coded bytes for the same message.
+
+Together, 2.7x the per-block perturbation of the WhatsApp path. At 2.51
+positions per block every block carries zigzag 1 AND 2, with half also
+carrying 3 -- against universal, where most blocks carry only zigzag 1.
+
+**Tomorrow, in order of value:**
+
+1. **Set `rsNsym: 32` and `lumaAcCount: 6` on `telegram_photo`**, matching
+   `universal`. Drops it to 1.43 positions/block, a 43% cut, and raises usable
+   capacity from ~1.4 KB to ~2.4 KB at the same time. Deliberately not done in
+   the same change that established the geometry -- error-correction strength
+   should not move while a geometry result is being confirmed. Needs one
+   upload to re-verify, since 32 gives RS 16 repairable bytes per 255 instead
+   of 64.
+2. **Measure what Telegram's re-encode actually costs**, the way §15.1 did for
+   WhatsApp (PSNR and carrier drift from the returned file). WhatsApp's drift
+   was tiny -- p99.9 of 3.95 -- and if Telegram's is similar there may be room
+   to lower delta below 28 for this profile specifically, which reduces the
+   artifact directly. Requires the returned file, not the sent one.
+3. **Send less.** At 1280 the payload is the dominant term, and no encoder
+   tuning beats not sending the bytes. This is the pointer tier (§10.4): embed
+   a nostr event id plus a NIP-44 key, ~300 B, and fetch the content from a
+   relay. At 300 B with rsNsym 32 the profile would need well under one AC
+   position per block -- quieter than WhatsApp is today.
+
+Note the honest ceiling: even fixed, Telegram-as-photo will stay noisier than
+WhatsApp at equal payload, because it has 36% fewer blocks to hide in.
+`telegram_file` remains the channel to use when quality or capacity matters.
