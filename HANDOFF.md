@@ -1853,3 +1853,57 @@ This is the **fourth** bug in the same family (§13.3, §13.6, §14.3): the merg
 succeeds, the report says so, and the item does not appear, because display is
 gated by a rule the report does not consult. The lesson each time is the same
 -- report what the user will SEE, not what the code did.
+
+### 15.15 Next session — start here
+
+Supersedes §14.5, whose Round 1 matrix is now done (§15.10).
+
+**State:** three channels verified end-to-end, each against the file the
+platform handed back. 194 tests, `tsc` and `npm run build` clean, all pushed.
+
+```
+WhatsApp   universal       1600x1200   PASS
+Telegram   telegram_file   no resize   PASS    best on capacity AND invisibility
+Telegram   telegram_photo  1280x960    PASS    rsNsym 32
+Instagram  instagram       1440 square untested since being demoted (§14.2)
+```
+
+**1. Measure what Telegram's re-encode actually costs.** The one piece of
+per-channel data still missing, and it gates every tuning decision for
+Telegram-as-photo. Repeat §15.1's analysis on a returned Telegram file: PSNR
+against what was uploaded, and carrier-coefficient drift percentiles. WhatsApp's
+came out at 45.3 dB with p99.9 drift of 3.95 against an embedding displacement
+of ~19 -- if Telegram's is comparable, delta 28 is more than that channel needs
+and can come down, which reduces the artifact directly. Needs the returned
+file, not the sent one ([[check-the-returned-file]]).
+
+**2. The pointer tier (§10.4).** At 1280x960 the payload size dominates
+everything else, and no encoder tuning beats not sending the bytes. Embed a
+nostr event id plus a NIP-44 key (~300 B) and fetch the content from a relay.
+At 300 B with rsNsym 32, Telegram-as-photo would need well under one AC
+position per block -- quieter than WhatsApp is today. Costs the offline
+property: the image stops being self-contained and the fetch is observable.
+`upload.ts` already posts to nostr.build. Discussed repeatedly, never built;
+it is now the highest-value remaining idea.
+
+**3. Round 2: payload ceilings.** Only ~600 B has ever been sent through a real
+platform. Find where each channel actually breaks: ~2 KB and ~3 KB on
+`universal`, and much higher on `telegram_file` (10 KB, 25 KB) since that is
+its purpose. Capacity numbers in the UI are still encoder estimates, not
+measured limits.
+
+**4. WhatsApp HD** (Round 1 test 2) is still unrun -- it decides whether
+merging the two WhatsApp entries was right.
+
+**Open, lower priority:** `RELIABLE_LUMA_AC = 6` comes from one photo (§14.5);
+truncation only fires for a single over-long note at the head of the selection;
+`usePersistedState.ts` is dead code with a latent effect-deps bug (§14.6).
+
+**Two standing rules earned the hard way today:**
+
+- Check the returned image's **dimensions before decoding anything**. A false
+  PASS from decoding the sent file cost a day and had corrupted the day-1
+  record too (§15.9).
+- Anything touching the stego core must be verified against the **real photo**,
+  not a synthetic cover -- a synthetic cover certified a profile that could not
+  decode itself on a real one (§15.5).
