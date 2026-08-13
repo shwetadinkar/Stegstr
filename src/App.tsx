@@ -7,7 +7,7 @@ import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls } from "./net
 import { profileFor } from "./stego-adaptive";
 import DetectResultModal, { type DetectedEvent } from "./DetectResultModal";
 import { verifyEvent, packForCapacity } from "./sync-engine";
-import { uint8ArrayToBase64 } from "./utils";
+import { uint8ArrayToBase64, isLocallyHidden } from "./utils";
 import {
   decodeQimImageFile,
   encodeQimImageFile,
@@ -51,6 +51,7 @@ const BASE_IDENTITIES = "stegstr_identities";
 const BASE_ACTING = "stegstr_acting_identity";
 const BASE_VIEWING = "stegstr_viewing_identities";
 const BASE_MUTE_PUBKEYS = "stegstr_mute_pubkeys";
+const BASE_IMPORTED_IDS = "stegstr_imported_event_ids";
 const BASE_MUTE_WORDS = "stegstr_mute_words";
 const BASE_RELAYS = "stegstr_relays";
 const BASE_ZAP_QUEUE = "stegstr_zap_queue";
@@ -272,8 +273,25 @@ function App({ profile }: { profile: string | null }) {
     } catch (_) {}
     return new Set();
   });
-  // Event IDs loaded via Detect image; show them even if author identity has "view" off (shared with any Stegstr user).
-  const [importedEventIds, setImportedEventIds] = useState<Set<string>>(() => new Set());
+  // Event IDs loaded via Detect image; show them even if author identity has
+  // "view" off (shared with any Stegstr user).
+  //
+  // PERSISTED, and it has to be. `events` is saved to localStorage but this
+  // set was rebuilt empty on every load, while the feed filter that depends
+  // on it is permanent. So an imported self-authored note was visible until
+  // the next reload and invisible afterwards -- still present in `events`,
+  // so re-importing the same image reported "0 new, 1 already had" and
+  // offered nothing to do. The note was in the user's data, unreachable.
+  const [importedEventIds, setImportedEventIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(getStorageKey(BASE_IMPORTED_IDS, profile));
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr);
+      }
+    } catch (_) {}
+    return new Set();
+  });
   const [mutedWords, setMutedWords] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem(getStorageKey(BASE_MUTE_WORDS, profile));
@@ -336,6 +354,11 @@ function App({ profile }: { profile: string | null }) {
       localStorage.setItem(getStorageKey(BASE_MUTE_PUBKEYS, profile), JSON.stringify([...mutedPubkeys]));
     } catch (_) {}
   }, [mutedPubkeys, profile]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(getStorageKey(BASE_IMPORTED_IDS, profile), JSON.stringify([...importedEventIds]));
+    } catch (_) {}
+  }, [importedEventIds, profile]);
   useEffect(() => {
     try {
       localStorage.setItem(getStorageKey(BASE_MUTE_WORDS, profile), JSON.stringify(mutedWords));
@@ -1263,13 +1286,23 @@ function App({ profile }: { profile: string | null }) {
             .filter((e) => e.kind === 5 && selfPubkeys.includes(e.pubkey))
             .flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])),
         );
+        // Held locally but NOT currently displayable: a note authored by one
+        // of your own identities is hidden by the feed filter unless you are
+        // viewing as that identity or its id is in importedEventIds. Calling
+        // such an event a duplicate tells the user "you already have
+        // everything" about something they cannot see, and leaves them no way
+        // to make it appear -- which is exactly what happened after
+        // importedEventIds turned out not to survive a reload. Accepting it
+        // re-adds the id and makes it visible, so it must be offered.
+        const hiddenLocally = (ev: { id: string; pubkey: string }) =>
+          isLocallyHidden(ev, ourPubkeysSet, viewingPubkeys, importedEventIds);
         const classified: DetectedEvent[] = normalized.map((ev) => ({
           ...ev,
           verified: verifyEvent(ev as never),
           // Own notes count as trusted: re-importing your own feed from an
           // image you made should not require ticking each item.
           followed: contactsSet.has(ev.pubkey) || viewingPubkeys.has(ev.pubkey),
-          duplicate: knownIds.has(ev.id) && !tombstonedIds.has(ev.id),
+          duplicate: knownIds.has(ev.id) && !tombstonedIds.has(ev.id) && !hiddenLocally(ev),
         }));
         const badCount = classified.filter((ev) => !ev.verified).length;
         if (badCount > 0) {

@@ -54,3 +54,27 @@ export function contentWithoutImages(content: string): string {
   const t = content.replace(URL_REGEX, (url) => (IMAGE_EXT.test(url) ? " " : url)).replace(/\s{2,}/g, " ").trim();
   return t;
 }
+
+/**
+ * Is this event held locally but hidden from the feed?
+ *
+ * The feed hides a note authored by one of your OWN identities unless you are
+ * currently viewing as that identity, or the note arrived via Detect image
+ * (importedEventIds). That exception exists so decoding your own feed back out
+ * of an image does not require switching identities to see it.
+ *
+ * It matters for classification as well as display: an event that is present
+ * but hidden must not be reported as a duplicate, or the user is told "you
+ * already have everything" about something they cannot see and is offered no
+ * way to surface it. Accepting it re-adds the id and makes it visible.
+ */
+export function isLocallyHidden(
+  ev: { id: string; pubkey: string },
+  ourPubkeys: ReadonlySet<string>,
+  viewingPubkeys: ReadonlySet<string>,
+  importedEventIds: ReadonlySet<string>,
+): boolean {
+  return ourPubkeys.has(ev.pubkey)
+    && !viewingPubkeys.has(ev.pubkey)
+    && !importedEventIds.has(ev.id);
+}

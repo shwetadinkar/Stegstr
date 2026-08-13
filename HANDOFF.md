@@ -1806,3 +1806,46 @@ Two changes close it:
 bytes per 255 instead of 64. `universal` uses 32 and survived WhatsApp, and
 Telegram-as-photo's own re-encode has not been measured yet (§15.12 item 2),
 so this needs one Telegram upload to confirm before it can be called settled.
+
+### 15.14 Telegram 1280 confirmed end-to-end — and a note you hold but cannot see
+
+`telegram_photo` at 1280 with rsNsym 32 was sent through Telegram, downloaded
+and decoded. Verified independently by decoding the returned file here: 2040
+bytes of ciphertext, one kind-1 event, magic and RS intact. **Telegram-as-photo
+is a working channel**, and the rsNsym 32 change survives it.
+
+The decode surfaced a separate app bug. The review said "0 new items, 1 already
+had -- nothing new to add", while the feed showed nothing at all.
+
+**Root cause: `importedEventIds` was never persisted.** `events` is saved to
+localStorage; that set was rebuilt empty on every load. But the feed filter
+that depends on it is permanent:
+
+```js
+if (ourPubkeysSet.has(note.pubkey) && !viewingPubkeys.has(note.pubkey)
+    && !importedEventIds.has(note.id)) return false;
+```
+
+A note authored by one of your own identities is hidden unless you are viewing
+as that identity or it was imported. So an imported self-authored note was
+visible until the next reload and invisible after it -- while still sitting in
+`events`, so re-importing the same image classified it as a duplicate and
+offered nothing to do. The note was in the user's data and unreachable by any
+action available to them.
+
+Two fixes, because either alone leaves a hole:
+
+1. **Persist `importedEventIds`** (`stegstr_imported_event_ids`, per profile).
+   Removes the reload cliff.
+2. **A held-but-hidden event is no longer classified as a duplicate.** Presence
+   is not the same as visibility; accepting it re-adds the id and makes it
+   appear. Without this, anyone whose set was already lost stays stuck.
+
+The rule is now `isLocallyHidden()` in `utils.ts` rather than an inline
+predicate, with tests -- including one asserting that a hidden event is not a
+duplicate, which is the bug itself stated as an invariant.
+
+This is the **fourth** bug in the same family (§13.3, §13.6, §14.3): the merge
+succeeds, the report says so, and the item does not appear, because display is
+gated by a rule the report does not consult. The lesson each time is the same
+-- report what the user will SEE, not what the code did.

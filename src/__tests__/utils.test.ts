@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractImageUrls, imageUrlFromTags, mediaUrlsFromTags, isVideoUrl, uint8ArrayToBase64, contentWithoutImages } from "../utils";
+import { extractImageUrls, imageUrlFromTags, mediaUrlsFromTags, isVideoUrl, uint8ArrayToBase64, contentWithoutImages, isLocallyHidden } from "../utils";
 
 describe("extractImageUrls", () => {
   it("extracts jpg/png/gif URLs from content", () => {
@@ -101,5 +101,44 @@ describe("contentWithoutImages", () => {
     const content = "A https://a.com/1.png B https://b.com/2.gif C";
     const result = contentWithoutImages(content);
     expect(result).toBe("A B C");
+  });
+});
+
+describe("isLocallyHidden", () => {
+  const mine = "a".repeat(64);
+  const other = "b".repeat(64);
+  const ours = new Set([mine]);
+  const none = new Set<string>();
+
+  it("hides your own note when you are not viewing as that identity", () => {
+    expect(isLocallyHidden({ id: "n1", pubkey: mine }, ours, none, none)).toBe(true);
+  });
+
+  it("shows it once that identity is being viewed", () => {
+    expect(isLocallyHidden({ id: "n1", pubkey: mine }, ours, new Set([mine]), none)).toBe(false);
+  });
+
+  it("shows it once it has been imported from an image", () => {
+    // This is the exception that makes decoding your own feed back out of an
+    // image work without switching identities.
+    expect(isLocallyHidden({ id: "n1", pubkey: mine }, ours, none, new Set(["n1"]))).toBe(false);
+  });
+
+  it("never hides someone else's note", () => {
+    expect(isLocallyHidden({ id: "n1", pubkey: other }, ours, none, none)).toBe(false);
+  });
+
+  it("a hidden event must not be classified as a duplicate", () => {
+    // The bug this guards: the event is in `events` (so "already had") but
+    // invisible, and the review then says "nothing new to add" -- leaving the
+    // user holding a note they cannot see and cannot surface. Presence alone
+    // is not enough; it has to be presence AND visibility.
+    const known = new Set(["n1"]);
+    const tombstoned = new Set<string>();
+    const evt = { id: "n1", pubkey: mine };
+    const duplicate = known.has(evt.id)
+      && !tombstoned.has(evt.id)
+      && !isLocallyHidden(evt, ours, none, none);
+    expect(duplicate).toBe(false);
   });
 });
