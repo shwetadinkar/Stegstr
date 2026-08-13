@@ -1676,7 +1676,7 @@ have caught this on day 1 and again today.
 1  universal      -> WhatsApp, normal      PASS     returned image verified 1600x1200 (§15.1)
 2  universal      -> WhatsApp, HD          not run
 3  universal      -> Telegram, as photo    FAIL     resized by Telegram, payload destroyed (§15.11)
-3b telegram_photo -> Telegram, as photo    PASS     decodes at 1280 (§15.12) -- but visibly noisier
+3b telegram_photo -> Telegram, as photo    PASS     1280 + rsNsym 32, decoded and displayed (§15.14)
 4  telegram_file  -> Telegram, as file     PASS     survives because nothing is resized (§15.11)
 ```
 
@@ -1844,6 +1844,10 @@ Two fixes, because either alone leaves a hole:
 The rule is now `isLocallyHidden()` in `utils.ts` rather than an inline
 predicate, with tests -- including one asserting that a hidden event is not a
 duplicate, which is the bug itself stated as an invariant.
+
+**Confirmed fixed on the device:** the same Telegram image that previously
+reported "nothing new to add" against an empty feed now shows the note and
+adds it.
 
 This is the **fourth** bug in the same family (§13.3, §13.6, §14.3): the merge
 succeeds, the report says so, and the item does not appear, because display is
