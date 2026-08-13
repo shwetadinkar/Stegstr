@@ -1768,3 +1768,41 @@ carrying 3 -- against universal, where most blocks carry only zigzag 1.
 Note the honest ceiling: even fixed, Telegram-as-photo will stay noisier than
 WhatsApp at equal payload, because it has 36% fewer blocks to hide in.
 `telegram_file` remains the channel to use when quality or capacity matters.
+
+### 15.13 telegram_photo takes rsNsym 32 — and the trap that came with it
+
+`telegram_photo` now carries `rsNsym: 32` and `lumaAcCount: 6`, matching
+`universal`. Measured on the real photo at 1280x960:
+
+```
+capacity   1423 B -> 2483 B          (+74%)
+density    2.51 -> 1.43 AC positions modified per block, for a 600 B payload
+blind decode after the change: PASS
+```
+
+**Setting rsNsym alone would have broken the profile silently.**
+`decodeQimImageFile` guesses an unknown image's settings in three phases, and
+the final phase passes **only `delta`** -- not rsNsym, not lumaAcCount. The
+phase that passes whole bundles was filtered on `lumaAcCount !== undefined`,
+and `telegram_photo` had no lumaAcCount. So it would have embedded at rsNsym 32
+and been blind-decoded at the default 128: never decodable.
+
+What makes this nasty is that **`qimSelfTest` would still have passed**, because
+the self-test knows which profile it is using. The image would download
+happily, look fine, and fail only when somebody tried to read it back --
+exactly the shape of §13's "self-test passed but the file was undecodable"
+family of bugs.
+
+Two changes close it:
+
+1. The sweep filter now also matches a non-default `rsNsym` on its own, so any
+   profile whose decode needs a setting phase 3 does not carry gets tried as a
+   complete bundle.
+2. A test asserts the invariant directly: every profile with a non-default
+   `rsNsym` or `lumaAcCount` must be reachable by the sweep. It mirrors the
+   filter, so narrowing that filter fails the test.
+
+**Still to verify on a device:** rsNsym 32 gives Reed-Solomon 16 repairable
+bytes per 255 instead of 64. `universal` uses 32 and survived WhatsApp, and
+Telegram-as-photo's own re-encode has not been measured yet (§15.12 item 2),
+so this needs one Telegram upload to confirm before it can be called settled.

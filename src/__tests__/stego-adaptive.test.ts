@@ -116,6 +116,39 @@ describe("measured platform profiles", () => {
     expect(PLATFORM_PROFILES.universal.note).not.toMatch(/Survives[^.]*Telegram/i);
   });
 
+  it("telegram_photo carries universal's coding settings", () => {
+    // The default rsNsym of 128 spends half of every codeword on parity, which
+    // at 1280x960 meant 2.51 AC positions per block against universal's 0.92
+    // (§15.12). 32 halves that and roughly doubles usable capacity.
+    const t = PLATFORM_PROFILES.telegram_photo;
+    expect(t.rsNsym).toBe(PLATFORM_PROFILES.universal.rsNsym);
+    expect(t.lumaAcCount).toBe(PLATFORM_PROFILES.universal.lumaAcCount);
+  });
+
+  it("every profile needing non-default coding is reachable by the blind sweep", () => {
+    // decodeQimImageFile guesses an unknown image's settings. Its final phase
+    // passes ONLY delta, so a profile with a non-default rsNsym or lumaAcCount
+    // has to be tried earlier as a complete bundle. If it is not, that profile
+    // embeds with one setting and is blind-decoded with another and never
+    // decodes -- while qimSelfTest still passes, because that path is told
+    // which profile to use. The failure would only appear when someone tried
+    // to read the image back (§15.13).
+    //
+    // This mirrors the filter in decodeQimImageFile; if that filter is
+    // narrowed, this fails.
+    const reachable = Object.entries(PLATFORM_PROFILES).filter(
+      ([, p]) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined) && p.chromaDelta === undefined,
+    ).map(([name]) => name);
+
+    for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
+      if (p.chromaDelta !== undefined) continue; // handled by the chroma phase
+      const needsBundle = p.rsNsym !== undefined || p.lumaAcCount !== undefined;
+      if (needsBundle) {
+        expect(reachable, `${name} would embed and never decode`).toContain(name);
+      }
+    }
+  });
+
   it("telegram_file is the lossless maximum-capacity channel", () => {
     // width 0 means no resize, so capacity scales with the cover instead of
     // being capped by a platform's geometry -- the whole point of the profile.

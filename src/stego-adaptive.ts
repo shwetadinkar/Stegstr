@@ -129,8 +129,20 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   //
   // UNVERIFIED at 1280: the observation that Telegram outputs 1280x960 is
   // solid, but no payload has yet been round-tripped at this geometry.
+  // rsNsym 32 and lumaAcCount 6, matching `universal` (§15.12). The default
+  // rsNsym of 128 spent half of every 255-byte codeword on parity, which at
+  // 1280x960 meant 2.51 AC positions modified per block against universal's
+  // 0.92 -- the reason Telegram photos looked visibly worse. At 32 it is 1.43,
+  // and usable capacity roughly doubles (~1.4 KB -> ~2.4 KB).
+  //
+  // lumaAcCount is NOT optional here even though the capacity cap already
+  // limits it to 6: decodeQimImageFile's blind sweep only passes rsNsym for
+  // profiles that set lumaAcCount, so a profile with a non-default rsNsym and
+  // no lumaAcCount embeds at 32 and is then blind-decoded at 128 -- i.e.
+  // never decodes. The sweep filter now also catches rsNsym on its own, but
+  // keeping both set here matches universal and costs nothing.
   telegram_photo: {
-    width: 1280, square: false, delta: 28,
+    width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled "
       + "and lost. Send as FILE instead if you need capacity; that path does not recompress.",
   },

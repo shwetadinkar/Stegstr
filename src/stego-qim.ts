@@ -1063,8 +1063,16 @@ export async function decodeQimImageFile(
       // Phase 2: zigzag-restricted profiles (§10.4 option 2) -- a smaller
       // lumaAcCount changes the AC-major stream layout, so like chroma this
       // isn't decodable by a guess that assumes the full 24 positions.
+      // Also catches a non-default rsNsym on its own. Phase 3 below passes
+      // only `delta`, so any profile whose decode needs a setting phase 3 does
+      // not carry must be tried here as a whole bundle -- otherwise it embeds
+      // with one rsNsym and is blind-decoded with the default, which never
+      // succeeds. Missing this was a real trap when telegram_photo took
+      // rsNsym 32 (§15.13): the self-test would still pass, because that path
+      // knows the profile, so the image would only fail once someone tried to
+      // read it back.
       const zigzagCandidates = Object.values(PLATFORM_PROFILES).filter(
-        (p) => p.lumaAcCount !== undefined && p.chromaDelta === undefined,
+        (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined) && p.chromaDelta === undefined,
       );
       // Phase 3: plain luma-only sweep, full AC range, chroma disabled --
       // backward compatible with images made before this change and other
