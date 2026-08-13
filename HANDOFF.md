@@ -77,7 +77,7 @@ i.e. pure chance) came from this. Every success came from avoiding it.
 | Platform | Behaviour (measured) | Target to use |
 |---|---|---|
 | WhatsApp (Standard) | caps width at **1600**; at or below, passes through untouched | ≤1600 |
-| Telegram (photo) | caps around **1920**; 1600×1200 returned unchanged | ≤1600 |
+| Telegram (photo) | ~~caps around 1920; 1600×1200 returned unchanged~~ **WRONG, see §15.9** — re-encodes everything to **1280×960** | ≤1280 |
 | Instagram | **does not cap — normalises everything to 1440×1440 square.** 1080 comes back *upscaled*; 4:3 comes back *padded* to square | **1440×1440, already square** |
 | Facebook | 2048 per upstream (not independently verified) | ≤2048 |
 
@@ -107,7 +107,7 @@ phone).
 | Config | Payload | BER | PSNR |
 |---|---|---|---|
 | WhatsApp 1600 | 32 KB (~227 compressed notes) | 0.15–0.38% | 52.5 dB @ 32 B |
-| Telegram 1600 | 4 KB tested | 0.25–0.53% | — |
+| Telegram 1600 | 4 KB tested | 0.25–0.53% | — | *(suspect: see §15.9, the returned image was probably never checked)* |
 | Instagram 1440 sq | 4 KB with spread+adaptive | 1.28% | clean by eye |
 | Instagram 1440 sq | 512 B plain | 0.51% | 35.9 dB |
 
@@ -1628,3 +1628,53 @@ attributed to the geometry and nothing else.
 
 Next Telegram upload should use `telegram_photo` at 1920 and check the returned
 image is still 1920 wide before anything else.
+
+### 15.9 Telegram outputs 1280x960 — earlier Telegram numbers are wrong
+
+Reported after the Round 1 Telegram test: **the image that was decoded was the
+one that had been sent, not the one Telegram gave back.** Telegram re-encodes
+every photo to **1280x960**.
+
+This is the single most consequential correction in this file, because it does
+not just invalidate one test.
+
+**It invalidates the Telegram PASS of 2026-08-13.** Nothing has actually been
+round-tripped through Telegram-as-photo.
+
+**It invalidates §1's Telegram row** ("caps around 1920; 1600x1200 returned
+unchanged") and casts doubt on §4.1's "Telegram 1600, 0.25-0.53% BER". A true
+1600 round trip through a channel that outputs 1280 would resample the grid and
+measure ~50% BER, not 0.25%. The most likely explanation is that the same
+mistake was made during the day-1 calibration: the sent file was inspected
+rather than the returned one. Both entries are now marked in place.
+
+**It breaks `universal`'s claim to Telegram.** `universal` is 1600, so a
+Telegram photo send resamples it and the payload is lost. The note and the
+picker label both promised Telegram; both now say WhatsApp, Twitter and
+Facebook only, and a test asserts the claim cannot quietly return.
+
+**And it partly retracts §15.7.** The mechanism there is sound -- a bigger
+cover spreads the same payload over more blocks, so less of the frame is
+touched -- but the observation that "the Telegram image looks cleaner" was
+almost certainly made on the sent file too. Telegram-as-photo delivers a
+*smaller* image than WhatsApp, so it is the noisiest photo channel, not the
+quietest. What survives is that **telegram_file** (send as document, no
+recompression) really is both the highest-capacity and most invisible channel.
+
+Changes made: `telegram_photo` is now 1280. `telegram_photo_1600` is kept only
+so old images have their geometry recorded -- it is not a fallback, Telegram
+resamples it.
+
+**The lesson, and it is the second time today (§15.5):** a result is only worth
+recording if it came from the file the platform handed back. Verify the
+returned image's dimensions *before* decoding anything. That single check would
+have caught this on day 1 and again today.
+
+### 15.10 Round 1 status, corrected
+
+```
+1  universal      -> WhatsApp, normal      PASS   (§15.1, returned image verified 1600x1200)
+2  universal      -> WhatsApp, HD          not run
+3  telegram_photo -> Telegram, as photo    INVALID -- must be redone at 1280 (§15.9)
+4  telegram_file  -> Telegram, as file     reported PASS, but confirm it was the RETURNED file
+```

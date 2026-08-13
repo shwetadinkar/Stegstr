@@ -114,31 +114,31 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     width: 1600, square: false, delta: 28,
     note: "Alias of whatsapp_standard -- HD uploads cap at the same 1600px.",
   },
-  // 1920, Telegram's actual cap. The previous 1600 was not Telegram's limit --
-  // it was WhatsApp's, carried over from the attempt to ship one uniform size
-  // for every platform. `universal` still exists for that job; there is no
-  // reason for a Telegram-only profile to pay WhatsApp's cap.
+  // 1280, which is what Telegram actually returns (§15.9).
   //
-  // Going up helps twice for the same reason (§15.7): 1920x1440 is 1.44x the
-  // blocks of 1600x1200, so the same message gets 1.44x the capacity AND is
-  // spread over 1.44x more of the frame, which measurably reduces how much of
-  // the picture is touched. Bigger cover, quieter image.
+  // Both earlier values were wrong and for the same reason: nobody had checked
+  // the DOWNLOADED image. Telegram re-encodes every photo to 1280x960, so 1600
+  // and 1920 are both resampled, and resampling shifts the 8x8 grid -- the one
+  // failure mode that destroys a payload outright (~50% BER, total loss)
+  // rather than degrading it.
   //
-  // NOT yet verified end-to-end. §1 records "caps around 1920" as the
-  // believed limit and 1600x1200 as the geometry actually observed coming back
-  // unchanged. If Telegram resamples at 1920 the payload is destroyed outright
-  // rather than degraded, which is how every geometry failure in this project
-  // has presented. telegram_photo_1600 below keeps the measured configuration.
+  // The old "caps around 1920, 1600x1200 returned unchanged" note in §1 does
+  // not survive this. It was almost certainly recorded by inspecting the file
+  // that was sent rather than the file that came back, which is the same
+  // mistake that produced a false PASS on 2026-08-13.
+  //
+  // UNVERIFIED at 1280: the observation that Telegram outputs 1280x960 is
+  // solid, but no payload has yet been round-tripped at this geometry.
   telegram_photo: {
-    width: 1920, square: false, delta: 28,
-    note: "1920px, Telegram's own cap. More capacity and a quieter image than 1600. "
-      + "Untested at 1920 -- if a Telegram send comes back resized, use the 1600 test profile.",
+    width: 1280, square: false, delta: 28,
+    note: "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled "
+      + "and lost. Send as FILE instead if you need capacity; that path does not recompress.",
   },
-  // The previously measured configuration, kept as a fallback: 0.25-0.53% BER
-  // at 1600x1200, verified returned unchanged.
+  // Kept only so images made by earlier versions still have their geometry
+  // recorded. Not a fallback -- Telegram resamples it.
   telegram_photo_1600: {
     width: 1600, square: false, delta: 28,
-    note: "Telegram at the measured 1600px. Fallback if 1920 turns out to be resampled.",
+    note: "Historical: the old Telegram geometry, before it was found that Telegram outputs 1280x960.",
   },
   // Zigzag-restricted by default (§13.5). Chroma was removed here: measured on
   // real photos it tints flat regions visibly (§12.4) and is worse than luma
@@ -264,8 +264,9 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
    */
   universal: {
     width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    note: "1600px, step 28. Survives WhatsApp, Telegram, Twitter and Facebook at half Instagram's "
-      + "perturbation. Not for Instagram, which needs a 1440 square canvas and step 56.",
+    note: "1600px, step 28. Verified through WhatsApp. Also sized for Twitter and Facebook. "
+      + "NOT for Telegram as photo -- Telegram re-encodes to 1280x960 and would resample this; "
+      + "use the Telegram profiles for that. Not for Instagram, which needs 1440 square, step 56.",
   },
   /**
    * The maximum-capacity channel. Telegram's "send as file" does not

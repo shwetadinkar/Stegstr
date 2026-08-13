@@ -85,31 +85,35 @@ describe("measured platform profiles", () => {
   it("universal fits every non-Instagram platform it claims, and skips Instagram", () => {
     // Universal deliberately excludes Instagram: matching Instagram means a
     // 1440 square canvas and step 56, and carrying that here charged every
-    // WhatsApp and Telegram user twice the perturbation for a platform they
-    // were not sending to. It must still fit under the caps it does claim.
+    // WhatsApp user twice the perturbation for a platform they were not
+    // sending to. It must still fit under the caps it does claim.
+    //
+    // telegram_photo is NOT in this list any more. Telegram outputs 1280x960
+    // (§15.9), so universal at 1600 is resampled there and does not survive.
+    // Universal covers WhatsApp, Twitter and Facebook; Telegram-as-photo needs
+    // its own profile and Telegram-as-file needs no resize at all.
     const u = PLATFORM_PROFILES.universal;
-    for (const name of ["whatsapp_standard", "telegram_photo", "twitter", "facebook"]) {
+    for (const name of ["whatsapp_standard", "twitter", "facebook"]) {
       expect(u.width).toBeLessThanOrEqual(PLATFORM_PROFILES[name].width);
     }
     expect(u.square).toBe(false);
     expect(u.delta).toBeLessThan(PLATFORM_PROFILES.instagram.delta);
   });
 
-  it("telegram_photo uses Telegram's own cap, with the measured 1600 kept as fallback", () => {
-    // 1600 was WhatsApp's cap, carried over from the one-uniform-size attempt.
-    // A Telegram-only profile has no reason to pay it (§15.8).
-    const t = PLATFORM_PROFILES.telegram_photo;
-    const fallback = PLATFORM_PROFILES.telegram_photo_1600;
-    expect(t.width).toBe(1920);
-    expect(fallback.width).toBe(1600);
-    // Same channel, so everything except geometry must match -- otherwise a
-    // failure at 1920 cannot be attributed to the width.
-    expect(t.delta).toBe(fallback.delta);
-    expect(t.square).toBe(fallback.square);
-    expect(t.lumaAcCount).toBe(fallback.lumaAcCount);
-    expect(t.rsNsym).toBe(fallback.rsNsym);
-    // universal must still fit under it, since universal targets both.
-    expect(PLATFORM_PROFILES.universal.width).toBeLessThanOrEqual(t.width);
+  it("telegram_photo matches what Telegram actually outputs", () => {
+    // Telegram re-encodes every photo to 1280x960 (§15.9). Anything larger is
+    // resampled, which shifts the 8x8 grid and destroys the payload outright.
+    // Both earlier values (1600, then 1920) came from inspecting the file that
+    // was SENT rather than the one that came back.
+    expect(PLATFORM_PROFILES.telegram_photo.width).toBe(1280);
+
+    // universal is 1600, so it does NOT survive Telegram-as-photo and must not
+    // claim to. This assertion exists to fail loudly if the note is ever
+    // reworded back to promising Telegram.
+    expect(PLATFORM_PROFILES.universal.width).toBeGreaterThan(
+      PLATFORM_PROFILES.telegram_photo.width,
+    );
+    expect(PLATFORM_PROFILES.universal.note).not.toMatch(/Survives[^.]*Telegram/i);
   });
 
   it("telegram_file is the lossless maximum-capacity channel", () => {
