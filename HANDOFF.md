@@ -1673,8 +1673,43 @@ have caught this on day 1 and again today.
 ### 15.10 Round 1 status, corrected
 
 ```
-1  universal      -> WhatsApp, normal      PASS   (§15.1, returned image verified 1600x1200)
+1  universal      -> WhatsApp, normal      PASS     returned image verified 1600x1200 (§15.1)
 2  universal      -> WhatsApp, HD          not run
-3  telegram_photo -> Telegram, as photo    INVALID -- must be redone at 1280 (§15.9)
-4  telegram_file  -> Telegram, as file     reported PASS, but confirm it was the RETURNED file
+3  universal      -> Telegram, as photo    FAIL     resized by Telegram, payload destroyed (§15.11)
+3b telegram_photo -> Telegram, as photo    not run  now 1280; this is the test that matters
+4  telegram_file  -> Telegram, as file     PASS     survives because nothing is resized (§15.11)
 ```
+
+### 15.11 Confirmed on a real device: resize destroys, no-resize survives
+
+The clean experiment, both halves observed directly:
+
+```
+Telegram AS PHOTO   1600px sent -> Telegram resizes to 1280x960
+                    -> decode fails: "Not a Stegstr image (magic not found)"
+
+Telegram AS FILE    no resize at all
+                    -> decodes
+```
+
+Two things are now measured rather than argued.
+
+**Resampling is total loss, not degradation.** The failure is not a corrupted
+message or a high bit error rate -- the magic bytes are not found at all,
+because shifting the 8x8 grid means the decoder is reading positions that never
+carried anything. This is exactly the mechanism §4.1/stego-adaptive.ts's header
+describes as the cause of *every* platform failure observed in this project,
+and it is the first time it has been watched happening end-to-end in the
+current build. It is also why geometry matching is the highest-value thing in
+this codebase: no amount of delta, Reed-Solomon or repetition can recover from
+it, and there is no partial credit.
+
+**telegram_file's PASS is genuine**, and for the stated reason: send-as-document
+does not recompress, so there is no resize to survive. That makes it the only
+Telegram path currently known to work, on top of already being the
+highest-capacity and least visible channel (§15.7).
+
+So Telegram-as-photo is not broken as a channel -- it was being fed the wrong
+size. At 1280 the grid should pass through untouched, exactly as 1600 does on
+WhatsApp. That is test 3b and it is the next thing to run.
+
