@@ -201,7 +201,7 @@ button:active { background-color: #eee; }
   border-right: 1px solid #ddd;
   background: #fff;
 }
-.sidebar.right { border-right: none; border-left: 1px solid #ddd; width: 280px; }
+.sidebar.right { border-right: none; border-left: 1px solid #ddd; width: 360px; }
 
 /* Profile card */
 .profile-card {
@@ -572,8 +572,14 @@ textarea { resize: vertical; min-height: 60px; }
 .stego-drop-zone {
   border: 2px dashed #ccc;
   border-radius: 8px;
-  padding: 1rem;
-  margin: 0.5rem 0;
+  padding: 2.25rem 1rem;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
   text-align: center;
   font-size: 0.9rem;
   color: #666;
@@ -1046,3 +1052,21 @@ textarea { resize: vertical; min-height: 60px; }
   .toast-error { background: #3a1b1b; color: #ef9a9a; border-color: #c62828; }
   .toast-info { background: #1b2a3a; color: #90caf9; border-color: #1565c0; }
 }
+
+/* Detect/embed result, shown in the stego panel under the log. */
+.stego-result {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  /* Wrap anywhere rather than push the sidebar wide: these strings contain
+     file names, relay URLs and byte counts with no natural break points. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.stego-result.status { background: #e8f5e9; border: 1px solid #c8e6c9; margin: 0.75rem 0 0; }
+.stego-result.error { background: #fdecea; border: 1px solid #f5c6c2; color: #611; font-weight: 500; }

@@ -21,6 +21,8 @@ export interface FeedViewProps {
   // Feed filter
   feedFilter: "global" | "following";
   setFeedFilter: React.Dispatch<React.SetStateAction<"global" | "following">>;
+  hideSensitive: boolean;
+  setHideSensitive: (on: boolean) => void;
   // Notes
   notesEmpty: boolean;
   feedItems: FeedItem[];
@@ -57,6 +59,7 @@ export function FeedView({
   myPicture, myName, newPost, setNewPost, postMediaUrls, setPostMediaUrls,
   uploadingMedia, postMediaInputRef, handlePostMediaUpload, handlePost,
   feedFilter, setFeedFilter,
+  hideSensitive, setHideSensitive,
   notesEmpty, feedItems,
   searchTrim, searchLower, searchNoSpaces, searchPubkeyHex, npubStr, networkEnabled,
   profiles, pubkey,
@@ -114,6 +117,22 @@ export function FeedView({
             <button type="button" className={feedFilter === "following" ? "active" : ""} onClick={() => setFeedFilter("following")}>Following</button>
           </div>
         </div>
+        {/* Only shown on Global: Following is a list the user curated, so
+            filtering it would hide people they deliberately chose. */}
+        {feedFilter === "global" && (
+          <label
+            className="muted"
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", margin: "0 0 0.5rem" }}
+            title="Hides posts the author flagged with a NIP-36 content warning, plus common adult hashtags"
+          >
+            <input
+              type="checkbox"
+              checked={hideSensitive}
+              onChange={(e) => setHideSensitive(e.target.checked)}
+            />
+            Hide adult / flagged content
+          </label>
+        )}
         {notesEmpty && (
           <p className="muted">No notes yet. Turn Network ON for relay feed, or load from image.</p>
         )}

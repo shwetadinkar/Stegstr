@@ -155,20 +155,19 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // never decodes. The sweep filter now also catches rsNsym on its own, but
   // keeping both set here matches universal and costs nothing.
   telegram_photo: {
-    // §17.4: at a 264 B pointer this profile used 12.1% of capacity but put
-    // 100% of the perturbation on zigzag 1 across 72.7% of blocks -- a
-    // coherent grating in the most visible frequency there is. "spread"
-    // scatters the same energy over all six positions and the whole frame.
+    // Ships ac-major, like every other profile.
     //
-    // repeat stays at the default 5. It was briefly raised to 15 on the theory
-    // that spreading costs robustness and capacity was spare -- but capacity
-    // is not what repetition spends. Every repeat is another MODIFIED
-    // COEFFICIENT: repeat 15 tripled the perturbation from 12.1% of slots to
-    // 36.4%, and the round-2 phone test came back visibly worse than round 1
-    // (§17.7). The premise was weak besides: Q75 steps across zigzag 1-6 are
-    // 6,6,7,7,5,8 -- flat enough that spreading costs little to begin with.
+    // "spread" (§17.4) was built to scatter a small payload across all six AC
+    // positions instead of saturating zigzag 1 from the top down, and it does
+    // exactly that -- but measured against real platforms it bought nothing.
+    // Telegram: both orderings survive. Instagram: 47.9% vs 49.1% of the
+    // decision margin in the light pipeline, and both destroyed in the heavy
+    // one (§17.13). No robustness difference, and no visual case ever
+    // established. ac-major has passes on all four channels, so the app ships
+    // one ordering that has been tested everywhere rather than a split that
+    // cannot be justified. `slotOrder` and the embed picker remain for
+    // experiments.
     width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    slotOrder: "spread",
     note: "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled "
       + "and lost. Send as FILE instead if you need capacity; that path does not recompress.",
   },

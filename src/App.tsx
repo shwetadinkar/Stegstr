@@ -43,6 +43,25 @@ import "./App.css";
 const STEGSTR_BUNDLE_VERSION = 1;
 
 /**
+ * Self-applied hashtags that reliably mark adult content on nostr. Structured
+ * and author-set, so far fewer false positives than scanning prose.
+ */
+const SENSITIVE_HASHTAGS = new Set([
+  "nsfw", "porn", "porno", "pornography", "xxx", "adult", "nude", "nudes",
+  "nudity", "sex", "sexy", "onlyfans", "hentai", "erotica", "erotic", "boobs",
+  "milf", "anal", "blowjob", "camgirl", "escort", "fetish",
+]);
+
+/**
+ * Last-resort literal matches. Kept blunt and short on purpose: every entry
+ * here also hides someone discussing the subject rather than posting it, so
+ * the list is limited to terms that are near-unambiguous in a feed context.
+ */
+const SENSITIVE_WORDS = [
+  "#nsfw", "#porn", "#xxx", "#hentai", "onlyfans.com", "pornhub.com",
+];
+
+/**
  * If a decrypted payload turns out to be a pointer rather than a bundle,
  * follow it and return what it names; otherwise return the payload unchanged.
  *
@@ -378,6 +397,9 @@ function App({ profile }: { profile: string | null }) {
   }, []);
   const [newRelayUrl, setNewRelayUrl] = useState("");
   const [feedFilter, setFeedFilter] = useState<"global" | "following">("global");
+  // Default ON. An unfiltered Global feed is the first thing the app shows,
+  // and it is not something most people can leave open on a shared screen.
+  const [hideSensitive, setHideSensitive] = useState(true);
   const [detecting, setDetecting] = useState(false);
   const [embedding, setEmbedding] = useState(false);
   const [stegoProgress, setStegoProgress] = useState("");
@@ -718,6 +740,31 @@ function App({ profile }: { profile: string | null }) {
 
   const isNoteMuted = (n: NostrEvent) => mutedPubkeys.has(n.pubkey) || noteContentMatchesMutedWord(n.content);
 
+  /**
+   * Adult / sensitive content, for the Global feed.
+   *
+   * Global shows notes from anyone on the relays, which in practice means it
+   * shows porn. That is fine for a general nostr client where the user chose
+   * to browse everything; it is a problem here, because Global is the first
+   * screen this app presents and an unfiltered one makes it unshowable.
+   *
+   * Leads with NIP-36 -- the protocol's own signal, a `content-warning` tag
+   * the author sets -- rather than guessing from words. Hashtags come second,
+   * since `t` tags are structured and self-applied. The literal word list is
+   * last and deliberately short: matching on words punishes people discussing
+   * a subject as readily as people posting it, and a filter that hides
+   * ordinary conversation is worse than one that misses a few posts.
+   */
+  const isSensitiveNote = (n: NostrEvent): boolean => {
+    for (const t of n.tags) {
+      // NIP-36: the author flagged it themselves.
+      if (t[0] === "content-warning") return true;
+      if (t[0] === "t" && SENSITIVE_HASHTAGS.has(String(t[1] ?? "").toLowerCase())) return true;
+    }
+    const lower = n.content.toLowerCase();
+    return SENSITIVE_WORDS.some((w) => lower.includes(w));
+  };
+
   const exploreNotes = rootNotes
     .filter((n) => !isNoteMuted(n))
     .sort((a, b) => {
@@ -741,6 +788,9 @@ function App({ profile }: { profile: string | null }) {
       if (isNoteMuted(note)) return false;
       if (ourPubkeysSet.has(note.pubkey) && !viewingPubkeys.has(note.pubkey) && !importedEventIds.has(note.id)) return false;
       if (reposter && ourPubkeysSet.has(reposter) && !viewingPubkeys.has(reposter) && !importedEventIds.has(item.type === "repost" ? item.repost.id : note.id)) return false;
+      // Global only: Following is a list the user curated themselves, and
+      // second-guessing it would hide people they deliberately chose.
+      if (feedFilter === "global" && hideSensitive && isSensitiveNote(note)) return false;
       if (feedFilter === "following") {
         const authorPk = item.type === "repost" ? item.repost.pubkey : item.note.pubkey;
         // You do not follow yourself, so a bare contactsSet test hides your
@@ -3015,6 +3065,8 @@ function App({ profile }: { profile: string | null }) {
               handlePost={handlePost}
               feedFilter={feedFilter}
               setFeedFilter={setFeedFilter}
+              hideSensitive={hideSensitive}
+              setHideSensitive={setHideSensitive}
               notesEmpty={notes.length === 0}
               feedItems={feedItems}
               searchTrim={searchTrim}
@@ -3250,6 +3302,16 @@ function App({ profile }: { profile: string | null }) {
                 </details>
               </div>
             )}
+            {/* Result of the last detect/embed, next to the controls that
+                caused it. It used to render at the bottom of <main>, far from
+                the image area the user is looking at and below the fold on a
+                short window -- so a failure could go unseen while the user
+                waited for something to happen. */}
+            {(status || decodeError) && (
+              <p className={`stego-result ${decodeError ? "error" : "status"}`}>
+                {decodeError || status}
+              </p>
+            )}
           </div>
         </aside>
       </div>
@@ -3420,7 +3482,18 @@ function App({ profile }: { profile: string | null }) {
           targetPlatform={targetPlatform}
           onTargetPlatformChange={setTargetPlatform}
           pointerMode={embedPointerMode}
-          onPointerModeChange={setEmbedPointerMode}
+          onPointerModeChange={(on) => {
+            setEmbedPointerMode(on);
+            // Pointer mode publishes to a relay, so it cannot work offline.
+            // Turning it on with Network off used to get as far as the publish
+            // step and then abort (§17.8). Enabling the network here makes the
+            // dependency visible at the moment of choosing, rather than as a
+            // failure two steps later.
+            if (on && !networkEnabled) {
+              setNetworkEnabled(true);
+              addStegoLog("Network turned on automatically: pointer mode publishes to a relay.");
+            }
+          }}
           slotOrder={embedSlotOrder}
           onSlotOrderChange={setEmbedSlotOrder}
         />
@@ -3441,9 +3514,6 @@ function App({ profile }: { profile: string | null }) {
         />
       )}
 
-      {(status || decodeError) && (
-        <p className={decodeError ? "error" : "status"}>{decodeError || status}</p>
-      )}
       <ToastContainer toasts={toast.toasts} onDismiss={toast.dismiss} />
     </main>
   );

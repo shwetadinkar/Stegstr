@@ -27,9 +27,16 @@ describe("slot ordering", () => {
    * (12.1% of slots to 36.4%) and the phone test came back visibly worse
    * (§17.7). Pinning the value here so raising it again has to be deliberate.
    */
-  it("telegram_photo does not raise repeat above the default", async () => {
-    const { profileFor } = await import("../stego-adaptive");
-    expect(profileFor("telegram_photo").repeat).toBeUndefined();
+  it("every profile ships ac-major and the default repeat", async () => {
+    // §17.13: spread bought no robustness on any real channel and was never
+    // shown to look better, so the app ships the one ordering with passes
+    // everywhere. The option and the picker stay for experiments; this pins
+    // the shipped default so a profile cannot drift onto an untested setting.
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    for (const [name, prof] of Object.entries(PLATFORM_PROFILES)) {
+      expect(`${name}:${prof.slotOrder ?? "ac-major"}`).toBe(`${name}:ac-major`);
+      expect(`${name}:${prof.repeat ?? 5}`).toBe(`${name}:5`);
+    }
   });
 
   it("telegram_photo carries a pointer-sized payload and reads it back", async () => {
