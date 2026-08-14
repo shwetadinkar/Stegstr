@@ -138,6 +138,26 @@ export default function DetectResultModal({
           </p>
         )}
 
+        {/* What the image held, by kind.
+            A bare "5 already had" gives the reader no way to judge whether
+            that number is reasonable. It usually is: an image carries the
+            notes AND the profiles of the people you follow, because a
+            recipient who gets your notes without your profile cannot identify
+            or reach you. But the feed only displays notes, so "5 events" next
+            to one visible message reads as a bug until the breakdown is
+            shown. */}
+        {events.length > 0 && (
+          <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
+            Contained: {[...events.reduce((m, e) => {
+              const k = kindLabel(e.kind) ?? "note";
+              return m.set(k, (m.get(k) ?? 0) + 1);
+            }, new Map<string, number>())]
+              .sort((a, b) => b[1] - a[1])
+              .map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`)
+              .join(", ")}
+          </p>
+        )}
+
         {eligible.length === 0 ? (
           <p className="muted" style={{ margin: "1rem 0" }}>
             Nothing new to add — you already have everything this image contained.
