@@ -285,6 +285,11 @@ function App({ profile }: { profile: string | null }) {
   // image worth sending in the first place, and pointer mode trades it away
   // for quietness. The user opts in when the channel is tight.
   const [embedPointerMode, setEmbedPointerMode] = useState(false);
+  // Slot-ordering override for A/B comparison (§17.4). "profile" uses whatever
+  // the platform profile declares; the other two force one ordering so the same
+  // cover and payload can be shot both ways and judged by eye. Decode is
+  // unaffected -- the blind sweep tries both orderings regardless.
+  const [embedSlotOrder, setEmbedSlotOrder] = useState<"profile" | "ac-major" | "spread">("profile");
   const [embedRecipientInput, setEmbedRecipientInput] = useState("");
   const [embedRecipients, setEmbedRecipients] = useState<string[]>([]);
   const [selectedMessagePeer, setSelectedMessagePeer] = useState<string | null>(null);
@@ -1970,7 +1975,10 @@ function App({ profile }: { profile: string | null }) {
             setStegoProgress("Embedding pointer into image...");
             let pointerBlob: Blob;
             try {
-              pointerBlob = await encodeQimImageFile(resizedCover, built.pointerBytes, { platform: targetPlatform });
+              pointerBlob = await encodeQimImageFile(resizedCover, built.pointerBytes, {
+                platform: targetPlatform,
+                ...(embedSlotOrder === "profile" ? {} : { slotOrder: embedSlotOrder }),
+              });
             } catch (e) {
               setDecodeError(`Encode failed: ${e instanceof Error ? e.message : String(e)}`);
               setEmbedding(false);
@@ -1996,7 +2004,12 @@ function App({ profile }: { profile: string | null }) {
             }
 
             const ptrName = embedCoverFile.name.replace(/\.[^.]+$/, "") || "image";
-            const ptrOutName = `${ptrName}-stegstr-${targetPlatform}-ptr.jpg`;
+            // The ordering goes in the filename. Every platform renames
+            // uploads, so with four variants in flight (2 platforms x 2
+            // orderings) there is otherwise no way to tell which returned file
+            // came from which setting -- the same problem §10.5 hit.
+            const ptrOrderTag = embedSlotOrder === "profile" ? "" : `-${embedSlotOrder}`;
+            const ptrOutName = `${ptrName}-stegstr-${targetPlatform}-ptr${ptrOrderTag}.jpg`;
             setStegoProgress("Downloading embedded image...");
             addStegoLog(`Triggering download: ${ptrOutName}`);
             downloadBlob(pointerBlob, ptrOutName);
@@ -2049,7 +2062,10 @@ function App({ profile }: { profile: string | null }) {
             setStegoProgress(`Embedding and verifying (${label})...`);
             let blob: Blob;
             try {
-              blob = await encodeQimImageFile(resizedCover, enc, { platform: targetPlatform });
+              blob = await encodeQimImageFile(resizedCover, enc, {
+                platform: targetPlatform,
+                ...(embedSlotOrder === "profile" ? {} : { slotOrder: embedSlotOrder }),
+              });
             } catch (e) {
               const error = `encode failed: ${e instanceof Error ? e.message : String(e)}`;
               addStegoLog(`  ${label} -> ${error}`);
@@ -2192,7 +2208,8 @@ function App({ profile }: { profile: string | null }) {
           // uploads on the way out, so without this there is no way to tell
           // which settings produced a returned image -- which matters whenever
           // more than one configuration is being compared.
-          const outName = `${name}-stegstr-${targetPlatform}.jpg`;
+          const orderTag = embedSlotOrder === "profile" ? "" : `-${embedSlotOrder}`;
+          const outName = `${name}-stegstr-${targetPlatform}${orderTag}.jpg`;
           addStegoLog(`Triggering download: ${outName}`);
           downloadBlob(blob, outName);
           addStegoLog("SUCCESS - Download started!");
@@ -2359,7 +2376,7 @@ function App({ profile }: { profile: string | null }) {
       setEmbedding(false);
       setStegoProgress("");
     }
-  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, networkEnabled, effectivePrivKey, embedMethod, targetPlatform]);
+  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, embedSlotOrder, networkEnabled, effectivePrivKey, embedMethod, targetPlatform]);
 
   const resolvePubkeyFromInput = useCallback((input: string): string | null => {
     const s = input.trim().replace(/\s/g, "");
@@ -3404,6 +3421,8 @@ function App({ profile }: { profile: string | null }) {
           onTargetPlatformChange={setTargetPlatform}
           pointerMode={embedPointerMode}
           onPointerModeChange={setEmbedPointerMode}
+          slotOrder={embedSlotOrder}
+          onSlotOrderChange={setEmbedSlotOrder}
         />
       )}
 

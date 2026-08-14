@@ -59,6 +59,8 @@ export interface EmbedModalProps {
   onTargetPlatformChange: (platform: string) => void;
   pointerMode: boolean;
   onPointerModeChange: (on: boolean) => void;
+  slotOrder: "profile" | "ac-major" | "spread";
+  onSlotOrderChange: (order: "profile" | "ac-major" | "spread") => void;
 }
 
 export function EmbedModal({
@@ -81,6 +83,8 @@ export function EmbedModal({
   onTargetPlatformChange,
   pointerMode,
   onPointerModeChange,
+  slotOrder,
+  onSlotOrderChange,
 }: EmbedModalProps) {
   const [capacityInfo, setCapacityInfo] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -268,6 +272,41 @@ export function EmbedModal({
                 </label>
               </div>
             </div>
+
+            {/* Slot ordering (§17.4) -- an A/B control, not a setting anyone
+                should need. Present so the same cover and payload can be shot
+                both ways through a real platform and judged by eye, because CI
+                cannot answer which looks better. Decode is unaffected: the
+                blind sweep tries both orderings regardless, so an image made
+                either way still reads. */}
+            {stegoMethod === "qim" && (
+              <div className="embed-slot-order" style={{ marginTop: "0.5rem" }}>
+                <label className="embed-section-label">Slot ordering (comparison):</label>
+                <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                  {([
+                    ["profile", "Profile default"],
+                    ["ac-major", "AC-major (fills top-down)"],
+                    ["spread", "Spread (scattered)"],
+                  ] as const).map(([value, label]) => (
+                    <label key={value} style={{ cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="slot-order"
+                        checked={slotOrder === value}
+                        onChange={() => onSlotOrderChange(value)}
+                      />
+                      {" "}{label}
+                    </label>
+                  ))}
+                </div>
+                <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
+                  AC-major writes one frequency from the top down, so a small payload
+                  forms a band across the upper part of the frame. Spread scatters the
+                  same bits over every frequency and the whole image. The filename
+                  records which was used.
+                </p>
+              </div>
+            )}
 
             {/* Platform selector (QIM only) */}
             {stegoMethod === "qim" && (
