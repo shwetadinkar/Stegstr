@@ -57,6 +57,8 @@ export interface EmbedModalProps {
   onStegoMethodChange: (method: StegoMethod) => void;
   targetPlatform: string;
   onTargetPlatformChange: (platform: string) => void;
+  pointerMode: boolean;
+  onPointerModeChange: (on: boolean) => void;
 }
 
 export function EmbedModal({
@@ -77,6 +79,8 @@ export function EmbedModal({
   onStegoMethodChange,
   targetPlatform,
   onTargetPlatformChange,
+  pointerMode,
+  onPointerModeChange,
 }: EmbedModalProps) {
   const [capacityInfo, setCapacityInfo] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -158,9 +162,16 @@ export function EmbedModal({
           </div>
         )}
 
-        {/* Capacity info */}
+        {/* Capacity info. In pointer mode the cover's capacity stops being the
+            constraint -- the payload is a fixed ~200 bytes and the feed lives
+            on a relay -- so quoting a KB figure here would answer a question
+            that no longer applies. */}
         {capacityInfo && (
-          <p className="muted" style={{ fontSize: "0.85rem" }}>{capacityInfo}</p>
+          <p className="muted" style={{ fontSize: "0.85rem" }}>
+            {pointerMode && stegoMethod === "qim"
+              ? `${capacityInfo} — not the limit in pointer mode; a ~200-byte pointer carries your whole feed.`
+              : capacityInfo}
+          </p>
         )}
 
         {/* Recipient mode */}
@@ -200,6 +211,34 @@ export function EmbedModal({
               </ul>
             )}
             {recipients.length === 0 && <p className="muted" style={{ fontSize: "0.85rem" }}>Add at least one recipient pubkey.</p>}
+          </div>
+        )}
+
+        {/* Pointer tier. Surfaced here rather than under Advanced because it
+            changes what the image fundamentally IS -- self-contained forever
+            versus a reference that needs the network -- and that is not a
+            detail to bury. QIM only: the pointer path is wired through the
+            JPEG encoder, and Dot is legacy. */}
+        {stegoMethod === "qim" && (
+          <div className="embed-pointer-mode" style={{ margin: "0.75rem 0" }}>
+            <label style={{ cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={pointerMode}
+                onChange={(e) => onPointerModeChange(e.target.checked)}
+              />
+              {" "}Send a link instead of the content
+            </label>
+            <p className="muted" style={{ fontSize: "0.85rem", margin: "0.25rem 0 0 1.5rem" }}>
+              {pointerMode
+                ? "The image carries a ~200-byte pointer and your feed goes to a relay, encrypted. " +
+                  "Far less visible, carries your whole feed regardless of cover size, and survives " +
+                  "channels that would destroy a full payload. The recipient must be online to read " +
+                  "it, and their relay request is visible to anyone watching their traffic."
+                : "The image carries everything, so it works offline forever and leaks nothing. " +
+                  "How much of your feed fits depends on the cover, and a large payload is more " +
+                  "visible in the image."}
+            </p>
           </div>
         )}
 

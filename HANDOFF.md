@@ -1908,3 +1908,121 @@ truncation only fires for a single over-long note at the head of the selection;
 - Anything touching the stego core must be verified against the **real photo**,
   not a synthetic cover -- a synthetic cover certified a profile that could not
   decode itself on a real one (§15.5).
+
+---
+
+## 16. The pointer tier is built (§15.15 item 2)
+
+Supersedes §15.15's item 2. Items 1, 3 and 4 there are untouched and still open.
+
+**206 tests passing**, `tsc --noEmit` clean, `npm run build` clean. Not yet
+phone-tested -- see §16.5, which is the whole of what remains.
+
+### 16.1 What it does
+
+Publish the feed to a relay as an encrypted blob; embed only a pointer to it.
+Measured, not estimated: **264 bytes** in the image, with three relay hints,
+regardless of how large the feed is. A 40-note bundle is ~16 KB, so this is
+roughly a 60x reduction in what has to survive the channel.
+
+For scale against the tightest verified channel: `telegram_photo` at 1280x960
+has a measured capacity of **2483 bytes**, so a pointer occupies about **11%**
+of it. That is the payload half of the delta x payload product this project has
+been fighting since §10.4.
+
+### 16.2 Files
+
+| File | Status | What |
+|---|---|---|
+| `src/pointer.ts` | **new** | Pointer format, `buildPointer`, `parsePointer`, `resolvePointer`, `PointerUnresolved`. All the reasoning is in the header comment |
+| `src/net-adapter.ts` | modified | `publishAndConfirm` (publish and wait for relay ACKs) and `fetchEventById` (one-shot fetch by id) |
+| `src/App.tsx` | modified | Pointer branch in the QIM embed path; `followPointerIfAny` in both detect paths |
+| `src/EmbedModal.tsx` | modified | "Send a link instead of the content" toggle, stating the tradeoff both ways |
+| `src/__tests__/pointer.test.ts` | **new** | 11 tests: round-trip, size ceiling, recipients, failure messages |
+| `src/__tests__/pointer-embed.test.ts` | **new** | Pointer through the real shipped encoder on `telegram_photo`, byte-identical read-back, resolve back to the bundle |
+
+### 16.3 Design decisions worth knowing before changing anything
+
+- **Blob kind is 30078** (NIP-78 app-specific data), with a random `d` tag so
+  blobs never replace one another under addressable-event semantics. Chosen
+  over a bespoke kind because relays that implement NIP-78 store it with no
+  special configuration, and an event a relay silently drops is a broken
+  feature regardless of how clean the number is.
+- **Open mode uses a fresh random key carried in the pointer.** The app key is
+  derived from a constant salt, so it is obfuscation, not secrecy -- fine for
+  an image, useless for a blob sitting on a public relay. There is a test
+  asserting the app key does *not* open the blob.
+- **Recipients mode encrypts the blob per recipient and carries no key.** The
+  alternative -- wrapping the pointer itself per recipient -- would add ~100
+  bytes per recipient to the one part that has to survive the channel, which is
+  the most expensive place in the system to spend a byte.
+- **Publish happens before encode, and a total publish failure aborts the
+  embed.** A pointer to an event no relay holds produces an image that decodes
+  perfectly and yields nothing: every stego-side indicator reads success. That
+  is the worst failure mode available here, so it is checked up front.
+- **Pointer mode bypasses the packing and binary-search machinery entirely.**
+  Two reasons. The embedded payload is fixed-size, so searching over event
+  count answers a question that no longer exists; and re-encrypting per attempt
+  would mint a *new* blob event each time, leaving the image pointing at an id
+  that was never published. This is why the branch sits before `encryptAndFit`
+  rather than inside it.
+- **`fetchEventById` deliberately skips the shared dedupe.** `outbox.markSeen`
+  returns false for anything already seen in the feed, so routing a one-shot
+  fetch through it would time out on content we demonstrably have.
+- **Resolution failure is not a decode failure.** `PointerUnresolved` carries
+  its own message and the detect path is careful not to dress it up as "not a
+  Stegstr image" -- that sends the user off to re-shoot a photo, which cannot
+  possibly help when the truth is "the relay has not got it yet".
+
+### 16.4 What it costs
+
+Stated plainly because the UI states it plainly, and the README should too:
+
+- **The image is no longer self-contained.** No relay, no content -- where a
+  self-contained image works offline forever.
+- **The fetch is observable.** Anyone watching the recipient's relay traffic
+  sees a request for a specific event id at a specific time. That is a metadata
+  leak the self-contained mode does not have.
+
+Hence a per-embed toggle, defaulting **off**. Self-contained is the property
+that makes a stego image worth sending; pointer mode trades it for quietness,
+and that is the user's call per image, not a global setting.
+
+### 16.5 Not yet verified -- read this before claiming it works
+
+**Nothing here has been through a real platform.** The end-to-end test uses a
+synthetic cover and the simulated channel, and §15.5 is exactly the record of a
+synthetic cover certifying a profile that could not decode itself on a real
+photo. What the tests prove is that the plumbing holds: the bytes embedded are
+the bytes recovered, and the pointer resolves back to the original bundle.
+
+The phone test that would settle it, in order:
+
+1. Embed with pointer mode on, target `telegram_photo`, using a **real photo**.
+2. Send through Telegram as a photo. Check the returned file's **dimensions
+   before decoding anything** (§15.9 -- a false PASS from decoding the sent
+   file cost a day).
+3. Load the return into Detect on a device that can reach relays, and confirm
+   the review modal lists the notes.
+4. Compare the artifact by eye against the same cover carrying a full payload.
+   The expected win is visible, not subtle: ~11% of capacity instead of ~100%.
+
+Also unverified: whether the four default relays actually accept kind 30078.
+`publishAndConfirm` reports which relays took it and the embed aborts if none
+did, so this fails loudly rather than silently -- but it has not been run
+against a live relay even once.
+
+### 16.6 Remaining work, in order
+
+1. **Phone-test the pointer tier** (§16.5) -- the only thing standing between
+   this and being a claim worth making
+2. Measure what Telegram's re-encode costs (§15.15 item 1) -- still the missing
+   per-channel number, and it gates whether delta 28 can come down
+3. Round 2: payload ceilings (§15.15 item 3) -- note pointer mode makes this
+   less urgent for the tight channels, and no less urgent for `telegram_file`
+4. WhatsApp HD (§15.15 item 4)
+5. README with the measurement tables
+6. NIP-44 into `stego-crypto.ts` (needs a version byte for old images)
+7. Rust matched-table encoder -- would not help Instagram (§10.3)
+8. MCP server
+9. Audio

@@ -3,7 +3,8 @@ import * as Nostr from "./nostr-stub";
 import { isWeb, pickImageFile, decodeStegoFile, encodeStegoToBlob, downloadBlob } from "./platform-web";
 import { getDotCapacityForFile } from "./stego-dot-web";
 import { getTauri } from "./platform-desktop";
-import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls } from "./net-adapter";
+import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls, fetchEventById, publishAndConfirm } from "./net-adapter";
+import { buildPointer, parsePointer, resolvePointer, PointerUnresolved } from "./pointer";
 import { profileFor } from "./stego-adaptive";
 import DetectResultModal, { type DetectedEvent } from "./DetectResultModal";
 import { verifyEvent, packForCapacity } from "./sync-engine";
@@ -40,6 +41,37 @@ import type { NostrEvent, NostrStateBundle, IdentityEntry, View, ProfileData } f
 import "./App.css";
 
 const STEGSTR_BUNDLE_VERSION = 1;
+
+/**
+ * If a decrypted payload turns out to be a pointer rather than a bundle,
+ * follow it and return what it names; otherwise return the payload unchanged.
+ *
+ * Both detect paths run this, so a pointer image and a self-contained image
+ * converge on the same classification and review flow -- the difference is a
+ * transport detail, and the user should not have to know which kind of image
+ * they were handed.
+ *
+ * Errors from here are deliberately distinct from decode errors: the image was
+ * read perfectly. Reporting "not a Stegstr image" when the truth is "the relay
+ * has not got it yet" would send the user to re-shoot the photo, which cannot
+ * possibly help.
+ */
+async function followPointerIfAny(
+  jsonString: string,
+  ourPrivKeyHex: string,
+  log: (message: string) => void,
+): Promise<string> {
+  const pointer = parsePointer(jsonString);
+  if (!pointer) return jsonString;
+  log(
+    `Pointer payload: event ${pointer.i.slice(0, 12)}..., ` +
+    `${pointer.r?.length ?? 0} relay hint(s), ${pointer.k ? "keyed" : "recipients-only"}`,
+  );
+  const ownRelays = await getRelayUrls();
+  const resolved = await resolvePointer(pointer, fetchEventById, ourPrivKeyHex, ownRelays);
+  log(`Pointer resolved: fetched ${resolved.length}B of content from a relay`);
+  return resolved;
+}
 // Appended to a note whose content had to be cut to fit a cover image, so the
 // reader can tell a shortened note from a complete one.
 const TRUNCATE_MARKER = " […cut to fit image]";
@@ -235,6 +267,11 @@ function App({ profile }: { profile: string | null }) {
   const [targetPlatform, setTargetPlatform] = useState<string>("universal");
   const [embedCoverFile, setEmbedCoverFile] = useState<File | null>(null);
   const [embedRecipientMode, setEmbedRecipientMode] = useState<"open" | "recipients">("open");
+  // Carry the feed itself, or carry a ~200-byte pointer to it on a relay
+  // (§10.4). Off by default: self-contained is the property that makes an
+  // image worth sending in the first place, and pointer mode trades it away
+  // for quietness. The user opts in when the channel is tight.
+  const [embedPointerMode, setEmbedPointerMode] = useState(false);
   const [embedRecipientInput, setEmbedRecipientInput] = useState("");
   const [embedRecipients, setEmbedRecipients] = useState<string[]>([]);
   const [selectedMessagePeer, setSelectedMessagePeer] = useState<string | null>(null);
@@ -1260,6 +1297,9 @@ function App({ profile }: { profile: string | null }) {
           setDecodeError("Invalid payload");
           return;
         }
+        // A pointer image decrypts to a pointer, not a bundle; fetch what it
+        // names before anything downstream can treat it as content.
+        jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog);
         const bundle = JSON.parse(jsonString) as NostrStateBundle;
         if (!Array.isArray(bundle.events)) {
           setDecodeError("Invalid payload");
@@ -1436,6 +1476,9 @@ function App({ profile }: { profile: string | null }) {
         logger.logAction("detect_error", "Invalid payload", { path });
         return;
       }
+      // See the browser detect path above: a pointer image decrypts to a
+      // pointer, and the content it names has to be fetched first.
+      jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog);
       const bundle = JSON.parse(jsonString) as NostrStateBundle;
       if (!Array.isArray(bundle.events)) {
         setDecodeError("Invalid payload");
@@ -1486,12 +1529,18 @@ function App({ profile }: { profile: string | null }) {
       logger.logAction("detect_completed", `Loaded ${bundle.events.length} events`, { path, eventCount: bundle.events.length });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      const isTauriBridgeError = /undefined.*invoke|__TAURI_INTERNALS__/i.test(String(msg));
+      // A pointer that would not resolve is not a decode failure and must not
+      // be dressed up as one -- its message already says what went wrong and
+      // what to do about it.
+      const isTauriBridgeError =
+        !(e instanceof PointerUnresolved) &&
+        /undefined.*invoke|__TAURI_INTERNALS__/i.test(String(msg));
       setDecodeError(
         isTauriBridgeError
           ? "Detect requires the Stegstr desktop app. Run: npm run tauri dev (not in a browser)"
           : msg
       );
+      if (e instanceof PointerUnresolved) addStegoLog(`Pointer unresolved: ${msg}`);
       logger.logError("Detect failed", e, { path });
     } finally {
       setDetecting(false);
@@ -1772,6 +1821,131 @@ function App({ profile }: { profile: string | null }) {
           // Step 2: Check QIM capacity
           const { capacityBytes: maxPayloadBytes, width: resW, height: resH } = await getQimCapacityForFile(embedCoverFile, targetPlatform);
           addStegoLog(`QIM capacity: ${maxPayloadBytes} bytes (${resW}x${resH})`);
+
+          // ===== POINTER TIER (§10.4) =====
+          //
+          // Publish the feed to a relay as an encrypted blob and embed only a
+          // ~200-byte pointer to it. The reason this exists: every channel
+          // measurement says the artifact is driven by delta x payload, delta
+          // is pinned from below by what the channel does to the image, so
+          // payload is the only lever left -- and nothing beats not sending
+          // the bytes.
+          //
+          // This runs before the fit machinery rather than through it, and
+          // that is deliberate. The whole selection-and-binary-search
+          // apparatus below exists to answer "how much of the feed fits in
+          // this cover", and in pointer mode the answer is "all of it": the
+          // embedded payload is a fixed size regardless of how many events the
+          // blob holds. Worse, re-encrypting per search attempt would mint a
+          // NEW blob event each time, so the image would end up pointing at an
+          // event id that was never published.
+          if (embedPointerMode) {
+            if (!effectivePrivKey) {
+              setDecodeError("Pointer mode needs a signing key — log in with an identity first.");
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
+            if (embedCandidates.length === 0) {
+              setDecodeError("There is nothing to embed yet — post a note or follow someone first.");
+              addStegoLog("Embed cancelled: no events to carry.");
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
+
+            // No capacity packing: the blob lives on a relay, not in the
+            // image, so the cover's size stops being the constraint on how
+            // much of the feed travels.
+            setStegoProgress("Building pointer payload...");
+            const bundle = await buildBundle(embedCandidates);
+            const bundleJson = JSON.stringify(bundle);
+            const relayUrls = await getRelayUrls();
+            const built = await buildPointer({
+              bundleJson,
+              privKeyHex: effectivePrivKey,
+              relays: relayUrls,
+              recipients:
+                embedRecipientMode === "recipients" && embedRecipients.length > 0
+                  ? embedRecipients
+                  : undefined,
+            });
+            addStegoLog(
+              `Pointer mode: ${embedCandidates.length} events -> ${bundleJson.length}B bundle on relay, ` +
+              `${built.pointerBytes.length}B in the image` +
+              (built.droppedHints ? ` (${built.droppedHints} relay hint(s) trimmed to fit)` : ""),
+            );
+
+            // Publish BEFORE encoding. If the blob never lands, the image is
+            // worthless, and finding that out after the user has already sent
+            // it is the worst possible ordering -- every stego-side indicator
+            // would read success.
+            setStegoProgress("Publishing hidden content to relays...");
+            const { accepted, failed } = await publishAndConfirm(built.event, relayUrls);
+            if (accepted.length === 0) {
+              const why = Object.entries(failed).map(([u, m]) => `${u}: ${m}`).join("; ");
+              setDecodeError(
+                "Pointer mode could not publish the hidden content to any relay, so the image " +
+                "would have pointed at nothing. Check your connection or relay list and try again" +
+                (why ? `. Relays said — ${why}` : "."),
+              );
+              addStegoLog(`Embed cancelled: no relay accepted the blob. ${why}`);
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
+            addStegoLog(`Blob accepted by ${accepted.length} relay(s): ${accepted.join(", ")}`);
+
+            setStegoProgress("Embedding pointer into image...");
+            let pointerBlob: Blob;
+            try {
+              pointerBlob = await encodeQimImageFile(resizedCover, built.pointerBytes, { platform: targetPlatform });
+            } catch (e) {
+              setDecodeError(`Encode failed: ${e instanceof Error ? e.message : String(e)}`);
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
+            const st = await qimSelfTest(pointerBlob, built.pointerBytes);
+            addStegoLog(`Pointer self-test ${st.ok ? "PASSED" : `FAILED (${st.error})`}`);
+            if (!st.ok) {
+              // There is no smaller payload to fall back to -- a pointer is
+              // already the floor. So this is the cover or the platform step,
+              // and saying so is more useful than a retry that cannot differ.
+              setDecodeError(
+                `Even a ${built.pointerBytes.length}-byte pointer does not survive read-back on this cover ` +
+                `at the ${targetPlatform} settings${st.error ? ` (${st.error})` : ""}. A pointer is the smallest ` +
+                `payload Stegstr can send, so this is the cover, not the amount of data: try a larger or more ` +
+                `textured photo. Flat images (logos, screenshots, plain walls) have no texture to hide in.`,
+              );
+              addStegoLog("Embed cancelled: pointer does not survive self-test on this cover.");
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
+
+            const ptrName = embedCoverFile.name.replace(/\.[^.]+$/, "") || "image";
+            const ptrOutName = `${ptrName}-stegstr-${targetPlatform}-ptr.jpg`;
+            setStegoProgress("Downloading embedded image...");
+            addStegoLog(`Triggering download: ${ptrOutName}`);
+            downloadBlob(pointerBlob, ptrOutName);
+            addStegoLog("SUCCESS - Download started!");
+            setEmbedModalOpen(false);
+            setEmbedCoverFile(null);
+            setEmbedding(false);
+            setStegoProgress("");
+            setStatus(
+              `Image downloaded. It carries a ${built.pointerBytes.length}-byte pointer to ` +
+              `${embedCandidates.length} events held on ${accepted.length} relay(s) — the recipient needs to be online to read it.`,
+            );
+            logger.logAction("embed_completed", "QIM pointer embed saved", {
+              eventCount: embedCandidates.length,
+              platform: targetPlatform,
+              pointerBytes: built.pointerBytes.length,
+              relays: accepted.length,
+            });
+            return;
+          }
 
           // Step 3: Encrypt and fit payload
           const fitted = await encryptAndFit(maxPayloadBytes);
@@ -2114,7 +2288,7 @@ function App({ profile }: { profile: string | null }) {
       setEmbedding(false);
       setStegoProgress("");
     }
-  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, effectivePrivKey, embedMethod, targetPlatform]);
+  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, effectivePrivKey, embedMethod, targetPlatform]);
 
   const resolvePubkeyFromInput = useCallback((input: string): string | null => {
     const s = input.trim().replace(/\s/g, "");
@@ -3157,6 +3331,8 @@ function App({ profile }: { profile: string | null }) {
           onStegoMethodChange={setEmbedMethod}
           targetPlatform={targetPlatform}
           onTargetPlatformChange={setTargetPlatform}
+          pointerMode={embedPointerMode}
+          onPointerModeChange={setEmbedPointerMode}
         />
       )}
 

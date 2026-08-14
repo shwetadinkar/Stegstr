@@ -138,6 +138,87 @@ export function publishEvent(event: NostrEvent, relays: string[] = DEFAULT_RELAY
   void outbox.enqueue(event, chosen).then(() => outbox.flush());
 }
 
+/**
+ * Publish and wait for relay acknowledgement, reporting which relays took it.
+ *
+ * `publishEvent` is deliberately fire-and-forget-with-durability: the caller
+ * does not wait, and the outbox retries until something accepts. That is right
+ * for posting a note, and wrong for the pointer tier, where the image is
+ * useless until the blob it names is actually retrievable. Handing someone a
+ * pointer to an event still sitting in a local queue produces an image that
+ * decodes perfectly and yields nothing.
+ *
+ * The event is also enqueued in the outbox, so a partial or failed publish
+ * still gets retried in the background rather than being lost.
+ */
+export async function publishAndConfirm(
+  event: NostrEvent,
+  relays: string[] = DEFAULT_RELAYS,
+  timeoutMs = 8000,
+): Promise<{ accepted: string[]; failed: Record<string, string> }> {
+  ensureStarted();
+  const targets = router.publishTargets(event, 8);
+  const chosen = targets.length ? targets : relays;
+  void outbox.enqueue(event, chosen);
+  const results = await pool.publish(event, chosen, timeoutMs);
+  const accepted: string[] = [];
+  const failed: Record<string, string> = {};
+  for (const [url, r] of Object.entries(results)) {
+    if (r.ok) accepted.push(url);
+    else failed[url] = r.message || "rejected";
+  }
+  return { accepted, failed };
+}
+
+/**
+ * Fetch a single event by id. Resolves null if no relay produced it in time.
+ *
+ * Needed by the pointer tier: an image carries an event id, and the content it
+ * names has to be pulled back before anything can be shown. This is a one-shot
+ * request rather than a standing subscription, so it deliberately does not go
+ * through the shared dedupe -- `outbox.markSeen` would return false for an
+ * event already seen in the feed, and the fetch would time out on content we
+ * demonstrably have.
+ *
+ * The id is re-checked against what came back. A relay is free to answer a
+ * filter with whatever it likes, and the whole point of resolving by id is
+ * that the id was fixed by the sender.
+ */
+export async function fetchEventById(
+  id: string,
+  relays: string[],
+  timeoutMs = 8000,
+): Promise<NostrEvent | null> {
+  ensureStarted();
+  const targets = relays.length ? relays : await getRelayUrls();
+  return new Promise<NostrEvent | null>((resolve) => {
+    let settled = false;
+    let unsub: (() => void) | null = null;
+    const finish = (ev: NostrEvent | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { unsub?.(); } catch { /* ignore */ }
+      resolve(ev);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      unsub = pool.subscribe(
+        nextSubId("fetch"),
+        [{ ids: [id], limit: 1 }],
+        targets,
+        (ev) => {
+          if (ev.id !== id) return;
+          if (!verifyEvent(ev)) return;
+          finish(ev);
+        },
+      );
+    } catch {
+      finish(null);
+    }
+  });
+}
+
 export type RelayEventCallback = (event: NostrEvent) => void;
 
 export type ConnectRelaysResult = {
