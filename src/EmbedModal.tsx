@@ -150,6 +150,16 @@ export function EmbedModal({
         <h3>Embed feed into image</h3>
         <p className="muted">Data is encrypted so only Stegstr users can read it. DMs are encrypted for the recipient only.</p>
 
+        {/* What makes a good cover. Stated at the point of choosing, because
+            by the time an embed fails on a flat image the user has already
+            spent the time -- and the property that matters (fine detail) is
+            not one people would guess at. */}
+        <p className="muted" style={{ fontSize: "0.82rem", margin: "0.5rem 0", lineHeight: 1.45 }}>
+          <strong>Pick a detailed photo</strong> — foliage, fabric, crowds, brickwork.
+          Detail hides the data. Avoid large smooth areas: sky, plain walls,
+          screenshots and logos give it nowhere to hide.
+        </p>
+
         {/* Cover image picker */}
         {isWeb() && (
           <div className="embed-cover-web" style={{ margin: "0.75rem 0" }}>

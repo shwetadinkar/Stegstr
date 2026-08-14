@@ -3235,6 +3235,10 @@ function App({ profile }: { profile: string | null }) {
           <div className="widget steganography-widget">
             <h3>Steganography</h3>
             <p className="muted">Detect image: load an image to extract data. Embed image: save your feed and messages to an image to share.</p>
+            <p className="muted" style={{ fontSize: "0.78rem", lineHeight: 1.4 }}>
+              Best covers are detailed photos — foliage, fabric, crowds, brickwork.
+              Avoid sky, plain walls, screenshots and logos.
+            </p>
             <div
               className={`stego-drop-zone${dragOverStego ? " drag-active" : ""}`}
               aria-label="Drop image here to detect"
