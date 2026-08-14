@@ -161,6 +161,12 @@ Payloads are encrypted (AES-GCM), with NIP-44 available for direct messages.
 
 ---
 
+## What this fork changes
+
+See [CHANGES.md](CHANGES.md) for the full list against upstream — platform
+measurements, the encoder defaults that were fixed, the networking rewrite, the
+security changes, and the limitations that bound all of it.
+
 ## Links
 
 - [Website](https://stegstr.com) — Downloads, getting started, wiki
