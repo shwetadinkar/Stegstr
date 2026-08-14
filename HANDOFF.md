@@ -2496,3 +2496,61 @@ back that extension routinely -- search by content or use a wider glob.
 Candidates never isolated: single vs multi-image post, time of day, server-side
 A/B, account state. Worth one controlled hour if Instagram matters; the
 practical mitigation (retry) already works without knowing.
+
+### 17.14 Top post-deadline lead: texture-selected block filling
+
+Supersedes the "spread" direction (§17.4, reverted in §17.13) as the best
+remaining idea for reducing visibility. Not built -- recorded so the next
+session starts from the right premise rather than rediscovering the traps.
+
+**The problem.** `buildCoeffStream` fills blocks in raster order, so a
+pointer-sized payload lands as a band across the top ~60% of the frame
+(§17.3, confirmed by eye). On most photos the top is sky or ceiling: the
+flattest region available, where a QIM grating is both most visible and least
+survivable.
+
+**The idea, in the right polarity.** Choose blocks by local texture and skip
+the flat ones. Note the intuition that runs the other way -- "embed in the
+background, nobody looks there", like a background remover -- is **inverted for
+this technique**: flat background is the worst possible target. §10.6's logo
+cover failed the self-test outright for exactly this reason, and §15.2's
+visible artifact was a small payload landing on a ceiling.
+
+There is a real perceptual point inside that intuition though, worth keeping as
+a *secondary* criterion:
+
+```
+texture      necessary   no texture, no embedding      (masking, physics)
+face/subject tiebreak    among equally textured blocks (scrutiny, perception)
+```
+
+They agree when the background is foliage, a crowd or brickwork. They conflict
+on a portrait against a plain wall, and there texture must win. Build texture
+selection first -- it is a variance measure over blocks already being
+transformed, so it is free. Only add face/subject segmentation if the tiebreak
+proves worth the several MB of WASM it would cost an app that currently ships
+no model.
+
+**Why it is viable now when §15.4 rejected it.** Two objections were recorded
+there and the pointer tier answers one outright:
+
+- *"Cuts capacity ~5.5x (18% of blocks instead of 88%)"* -- no longer binding.
+  A 264 B pointer uses 12% of capacity, which fits inside an 18% budget.
+- *"211 blocks flip sides, and the first flip shifts every subsequent bit"* --
+  this is the real problem and it has a cleaner fix than the wet-paper coding
+  §15.4 suggested. **Stop packing sequentially.** Address bit i to slot i of
+  the FULL slot space, write only into selected blocks, and treat unselected
+  slots as erasures. A block that flips sides then costs one erasure instead of
+  desynchronising everything after it, and Reed-Solomon already handles
+  erasures -- that is what `rsNsym 32` is for.
+
+**Trap to clear first.** §15.3: the current texture measure (`blockActivity`,
+zigzag 25-40) reads exactly zero for 75% of blocks at Q75, so 92.6% land in the
+lowest rung and the ladder is nearly a no-op on real photos. Any selection
+scheme needs a measure that actually discriminates. §15.4 tried mid-band
+(zigzag 10-24) and it was judged worse by eye -- but that comparison was not
+energy-matched (§15.4's own closing note), so the verdict is softer than it
+reads and the direction is not disproven.
+
+**Validation bar.** Stego-core change: real photo, not synthetic (§15.5), and a
+round trip on every channel that currently passes. Do not ship it on CI alone.
