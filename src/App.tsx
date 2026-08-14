@@ -309,6 +309,10 @@ function App({ profile }: { profile: string | null }) {
   // cover and payload can be shot both ways and judged by eye. Decode is
   // unaffected -- the blind sweep tries both orderings regardless.
   const [embedSlotOrder, setEmbedSlotOrder] = useState<"profile" | "ac-major" | "spread">("profile");
+  // null = carry the feed and let packForCapacity choose. A list = carry
+  // exactly these notes. "Back up my feed" and "send this one message to this
+  // one person" are different jobs and only the first was possible before.
+  const [embedNoteIds, setEmbedNoteIds] = useState<string[] | null>(null);
   const [embedRecipientInput, setEmbedRecipientInput] = useState("");
   const [embedRecipients, setEmbedRecipients] = useState<string[]>([]);
   const [selectedMessagePeer, setSelectedMessagePeer] = useState<string | null>(null);
@@ -1789,7 +1793,7 @@ function App({ profile }: { profile: string | null }) {
         // score highly in packForCapacity's density ranking, so at any
         // capacity tight enough to matter they crowded out actual note text
         // from people you follow, or yourself.
-        const embedCandidates = events.filter(
+        const embedCandidatesAll = events.filter(
           (e) => (ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey))
             // Deletions are relay-propagated state, not content. A kind-5
             // tombstone is ~380 bytes of pure overhead with no content, so
@@ -1803,6 +1807,24 @@ function App({ profile }: { profile: string | null }) {
             // deletion on the far side.
             && e.kind !== 5
             && !deletedNoteIds.has(e.id));
+        // An explicit selection overrides priority packing entirely. Profiles
+        // are still added by buildBundle, so the recipient can still identify
+        // the sender -- what is dropped is everything the user did not ask for.
+        const embedCandidates = embedNoteIds
+          ? embedCandidatesAll.filter((e) => embedNoteIds.includes(e.id))
+          : embedCandidatesAll;
+        if (embedNoteIds) {
+          addStegoLog(`Carrying ${embedCandidates.length} selected note(s) only.`);
+          // Distinct from "you have nothing to embed": the user chose an empty
+          // set, so telling them to post a note first would be wrong.
+          if (embedCandidates.length === 0) {
+            setDecodeError("No notes selected — pick at least one, or switch to carrying your feed.");
+            addStegoLog("Embed cancelled: explicit selection was empty.");
+            setEmbedding(false);
+            setStegoProgress("");
+            return;
+          }
+        }
 
         // Helper: choose which events to carry, then encrypt to fit capacity.
         //
@@ -2426,7 +2448,7 @@ function App({ profile }: { profile: string | null }) {
       setEmbedding(false);
       setStegoProgress("");
     }
-  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, embedSlotOrder, networkEnabled, effectivePrivKey, embedMethod, targetPlatform]);
+  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, embedSlotOrder, embedNoteIds, networkEnabled, effectivePrivKey, embedMethod, targetPlatform]);
 
   const resolvePubkeyFromInput = useCallback((input: string): string | null => {
     const s = input.trim().replace(/\s/g, "");
@@ -3500,6 +3522,13 @@ function App({ profile }: { profile: string | null }) {
           }}
           slotOrder={embedSlotOrder}
           onSlotOrderChange={setEmbedSlotOrder}
+          selectableNotes={events
+            .filter((e) => e.kind === 1 && ourPubkeysSet.has(e.pubkey) && !deletedNoteIds.has(e.id))
+            .sort((a, b) => b.created_at - a.created_at)
+            .slice(0, 50)
+            .map((e) => ({ id: e.id, content: e.content, created_at: e.created_at }))}
+          selectedNoteIds={embedNoteIds}
+          onSelectedNoteIdsChange={setEmbedNoteIds}
         />
       )}
 

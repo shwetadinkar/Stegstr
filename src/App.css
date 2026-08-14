@@ -1112,3 +1112,26 @@ textarea { resize: vertical; min-height: 60px; }
   border-left: 2px solid #ddd;
   border-radius: 0 4px 4px 0;
 }
+
+/* Explicit note selection in the embed dialog. */
+.embed-note-picker {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.embed-note-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  cursor: pointer;
+  border-bottom: 1px solid #eee;
+}
+.embed-note-pick:last-child { border-bottom: none; }
+.embed-note-pick:hover { background: #f0f0f0; }
+.embed-note-pick input { margin-top: 0.15rem; flex-shrink: 0; }
+.embed-note-pick span { overflow-wrap: anywhere; }

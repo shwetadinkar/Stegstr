@@ -78,6 +78,11 @@ export interface EmbedModalProps {
   onPointerModeChange: (on: boolean) => void;
   slotOrder: "profile" | "ac-major" | "spread";
   onSlotOrderChange: (order: "profile" | "ac-major" | "spread") => void;
+  /** The user's own recent notes, newest first, offered for explicit selection. */
+  selectableNotes: { id: string; content: string; created_at: number }[];
+  /** null = carry the whole feed by priority; a list = carry exactly these. */
+  selectedNoteIds: string[] | null;
+  onSelectedNoteIdsChange: (ids: string[] | null) => void;
 }
 
 export function EmbedModal({
@@ -102,6 +107,9 @@ export function EmbedModal({
   onPointerModeChange,
   slotOrder,
   onSlotOrderChange,
+  selectableNotes,
+  selectedNoteIds,
+  onSelectedNoteIdsChange,
 }: EmbedModalProps) {
   const [capacityInfo, setCapacityInfo] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -207,6 +215,87 @@ export function EmbedModal({
               : capacityInfo}
           </p>
         )}
+
+        {/* What to carry.
+            "Back up my whole feed" and "send this one message to this one
+            person" are different jobs, and only the first was possible before:
+            selection was automatic, by usefulness per byte. That is the right
+            default and the wrong only option. */}
+        <div className="embed-what" style={{ margin: "0.75rem 0" }}>
+          <label style={{ marginRight: "1rem", cursor: "pointer" }}>
+            <input
+              type="radio"
+              name="embed-what"
+              checked={selectedNoteIds === null}
+              onChange={() => onSelectedNoteIdsChange(null)}
+            />
+            {" "}My feed (chosen automatically)
+          </label>
+          <label style={{ cursor: "pointer" }}>
+            <input
+              type="radio"
+              name="embed-what"
+              checked={selectedNoteIds !== null}
+              onChange={() => onSelectedNoteIdsChange([])}
+              disabled={selectableNotes.length === 0}
+            />
+            {" "}Pick specific notes
+          </label>
+
+          {selectedNoteIds !== null && (
+            <div style={{ marginTop: "0.5rem" }}>
+              {selectableNotes.length === 0 ? (
+                <p className="muted" style={{ fontSize: "0.82rem" }}>
+                  You have no notes to choose from yet.
+                </p>
+              ) : (
+                <>
+                  <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.35rem" }}>
+                    <button
+                      type="button"
+                      className="btn-small"
+                      onClick={() => onSelectedNoteIdsChange(selectableNotes.map((n) => n.id))}
+                    >
+                      Select all
+                    </button>
+                    <button type="button" className="btn-small" onClick={() => onSelectedNoteIdsChange([])}>
+                      Select none
+                    </button>
+                    <span className="muted" style={{ fontSize: "0.78rem", alignSelf: "center" }}>
+                      {selectedNoteIds.length} selected
+                    </span>
+                  </div>
+                  <div className="embed-note-picker">
+                    {selectableNotes.map((n) => {
+                      const on = selectedNoteIds.includes(n.id);
+                      return (
+                        <label key={n.id} className="embed-note-pick">
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() =>
+                              onSelectedNoteIdsChange(
+                                on
+                                  ? selectedNoteIds.filter((x) => x !== n.id)
+                                  : [...selectedNoteIds, n.id],
+                              )
+                            }
+                          />
+                          <span>{n.content.replace(/\s+/g, " ").slice(0, 90) || "(no text)"}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {selectedNoteIds.length === 0 && (
+                    <p className="muted" style={{ fontSize: "0.78rem", margin: "0.3rem 0 0" }}>
+                      Nothing selected — pick at least one note.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Recipient mode */}
         <div className="embed-recipient-mode" style={{ margin: "0.75rem 0" }}>
