@@ -1070,3 +1070,45 @@ textarea { resize: vertical; min-height: 60px; }
 }
 .stego-result.status { background: #e8f5e9; border: 1px solid #c8e6c9; margin: 0.75rem 0 0; }
 .stego-result.error { background: #fdecea; border: 1px solid #f5c6c2; color: #611; font-weight: 500; }
+
+/* Collapsible explanation inside the embed dialog.
+   The modal had grown five paragraphs of prose, which pushed the Embed button
+   below the fold -- the help was in the way of the action it explained. */
+.embed-note { margin: 0.35rem 0 0.5rem; }
+.embed-note summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: #666;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0;
+  user-select: none;
+}
+.embed-note summary::-webkit-details-marker { display: none; }
+.embed-note summary::before {
+  content: "?";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid #bbb;
+  font-size: 0.65rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.embed-note summary:hover { color: #333; }
+.embed-note summary:hover::before { border-color: #666; }
+.embed-note[open] summary { margin-bottom: 0.25rem; }
+.embed-note-body {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #666;
+  padding: 0.4rem 0.55rem;
+  background: #f7f7f7;
+  border-left: 2px solid #ddd;
+  border-radius: 0 4px 4px 0;
+}

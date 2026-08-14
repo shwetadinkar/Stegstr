@@ -8,6 +8,23 @@ import type { ProfileData } from "./types";
 
 export type StegoMethod = "qim" | "dot";
 
+/**
+ * A one-line explanation that opens on demand.
+ *
+ * The modal had grown five paragraphs of prose, which pushed the Embed button
+ * off the bottom of the dialog -- so the text meant to help was in the way of
+ * the action it was explaining. Collapsed by default: the summary says what
+ * the note is about, and anyone who wants the reasoning can ask for it.
+ */
+function Note({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <details className="embed-note">
+      <summary>{label}</summary>
+      <div className="embed-note-body">{children}</div>
+    </details>
+  );
+}
+
 // Labels state the geometry actually used. The previous values were wrong in
 // two places that mattered: Instagram was labelled 1080px (Instagram upscales
 // that to its 1440 canvas, destroying the payload) and WhatsApp HD 4096px
@@ -156,9 +173,12 @@ export function EmbedModal({
             not one people would guess at. */}
         <p className="muted" style={{ fontSize: "0.82rem", margin: "0.5rem 0", lineHeight: 1.45 }}>
           <strong>Pick a detailed photo</strong> — foliage, fabric, crowds, brickwork.
-          Detail hides the data. Avoid large smooth areas: sky, plain walls,
-          screenshots and logos give it nowhere to hide.
         </p>
+        <Note label="What makes a good cover photo?">
+          Detail hides the data, and the same texture is what lets it survive a
+          platform's re-compression. Avoid large smooth areas — sky, plain walls,
+          screenshots and logos give it nowhere to hide.
+        </Note>
 
         {/* Cover image picker */}
         {isWeb() && (
@@ -243,7 +263,7 @@ export function EmbedModal({
               />
               {" "}Send a link instead of the content
             </label>
-            <p className="muted" style={{ fontSize: "0.85rem", margin: "0.25rem 0 0 1.5rem" }}>
+            <Note label={pointerMode ? "What sending a link means" : "What embedding everything means"}>
               {pointerMode
                 ? "The image carries a ~200-byte pointer and your feed goes to a relay, encrypted. " +
                   "Far less visible, carries your whole feed regardless of cover size, and survives " +
@@ -252,7 +272,7 @@ export function EmbedModal({
                 : "The image carries everything, so it works offline forever and leaks nothing. " +
                   "How much of your feed fits depends on the cover, and a large payload is more " +
                   "visible in the image."}
-            </p>
+            </Note>
           </div>
         )}
 
@@ -309,12 +329,12 @@ export function EmbedModal({
                     </label>
                   ))}
                 </div>
-                <p className="muted" style={{ fontSize: "0.8rem", margin: "0.25rem 0 0" }}>
+                <Note label="What slot ordering does">
                   AC-major writes one frequency from the top down, so a small payload
                   forms a band across the upper part of the frame. Spread scatters the
                   same bits over every frequency and the whole image. The filename
                   records which was used.
-                </p>
+                </Note>
               </div>
             )}
 
@@ -338,7 +358,7 @@ export function EmbedModal({
                   />
                   {" "}Show experimental test profiles (for bracket testing)
                 </label>
-                <p className="muted" style={{ fontSize: "0.8rem", marginTop: "0.25rem" }}>
+                <Note label="About this platform target">
                   {(() => {
                     const prof = profileFor(targetPlatform);
                     const size = prof.width === 0
@@ -348,11 +368,9 @@ export function EmbedModal({
                         : prof.width + "px wide";
                     return "Pre-resizes to " + size + ". " + prof.note;
                   })()}
-                </p>
-                <p className="muted" style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}>
-                  Sizes are measured from real platform round-trips. Choosing a size
+                  {" "}Sizes are measured from real platform round-trips. Choosing a size
                   the platform will resize destroys the hidden data.
-                </p>
+                </Note>
               </div>
             )}
           </div>
