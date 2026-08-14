@@ -1,4 +1,12 @@
 :root {
+  /* Declare the page light-only.
+     Without this a browser is free to decide for itself: Chrome's "Auto Dark
+     Mode for Web Contents" force-inverts pages that state no preference, and
+     that inversion is applied to colours the stylesheet never chose -- which
+     is how the app could still render dark and unreadable after every dark
+     rule had been removed. It also makes form controls and scrollbars render
+     light instead of following the OS. */
+  color-scheme: light;
   font-family: Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 1.5;
