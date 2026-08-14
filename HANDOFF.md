@@ -2026,3 +2026,41 @@ against a live relay even once.
 7. Rust matched-table encoder -- would not help Instagram (§10.3)
 8. MCP server
 9. Audio
+
+### 16.7 Relay capability: kind 30078 verified live
+
+Run 2026-08-14 against the four default relays, publishing a real throwaway
+event and reading it back **by id** from the same socket. An OK only says the
+relay accepted it; being served back is the half the tier actually needs, so
+both were checked.
+
+```
+wss://relay.primal.net    kind 30078: accepted + served back
+wss://relay.damus.io      kind 30078: accepted + served back   (connected on retry)
+wss://nos.lol             kind 30078: accepted + served back
+wss://relay.nostr.band    UNREACHABLE from this network - no verdict
+```
+
+**3/3 reachable relays store and serve kind 30078.** The NIP-78 assumption in
+§16.3 holds; the tier is not resting on a kind that relays quietly drop.
+
+Two things this run surfaced that are worth carrying forward:
+
+- **A first pass reported two "socket errors" and it was a false negative.**
+  `relay.damus.io` connects intermittently from here -- 2 of 3 bare connection
+  attempts succeeded -- so a single failed attempt looks identical to a
+  rejection while meaning something completely different. Any relay check must
+  retry the connection and report "unreachable" separately from "rejected",
+  or it will invent relay problems that do not exist. `relay.nostr.band` fails
+  consistently and its plain HTTPS also fails from this network, so that one is
+  probably a local routing issue rather than an outage -- but it is untested
+  from anywhere else, so treat it as unknown, not as broken.
+- **The kind 1 control got no OK from any of the three relays**, while kind
+  30078 on the same socket got one immediately. That is the opposite of what
+  spam-filtering intuition predicts and it is unexplained. It does not affect
+  the 30078 result, which stands on direct evidence, but kind 1 is the app's
+  ordinary posting path and "publishes a note, relay never acknowledges" is
+  exactly the shape of bug the Outbox was built to paper over. **Worth an
+  hour before the README claims anything about publishing reliability.**
+  Caveat before chasing it: the test pubkey was brand new with no kind 0 or
+  kind 3, which is not how a real user's first post looks.
