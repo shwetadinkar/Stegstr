@@ -405,7 +405,7 @@ export function EmbedModal({
                 cannot answer which looks better. Decode is unaffected: the
                 blind sweep tries both orderings regardless, so an image made
                 either way still reads. */}
-            {stegoMethod === "qim" && (
+            {stegoMethod === "qim" && showTestProfiles && (
               <div className="embed-slot-order" style={{ marginTop: "0.5rem" }}>
                 <label className="embed-section-label">Slot ordering (comparison):</label>
                 <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>

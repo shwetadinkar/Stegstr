@@ -1,0 +1,161 @@
+/*
+ * Dark theme — NOT CURRENTLY LOADED.
+ *
+ * This shipped as `@media (prefers-color-scheme: dark)` in App.css, so anyone
+ * whose OS was set to dark got it automatically, with no way to turn it off.
+ * Testing found it unusable: large parts of the UI were unreadable, and there
+ * was no control to escape it. An app that is broken for every user with a
+ * dark OS is worse than one that is simply light.
+ *
+ * The rules are kept here rather than deleted -- most of them are fine, and
+ * finishing this is a contained piece of work: audit every element added since
+ * it was written (the newer UI has no dark rules at all), then either import
+ * this file behind an explicit theme setting or restore the media query once
+ * the gaps are closed. Note the 76 inline style={{ }} blocks in the TSX cannot
+ * be reached from a stylesheet and will need converting either way.
+ *
+ * To re-enable: import this file from main.tsx and gate it on a theme class.
+ */
+
+@media (prefers-color-scheme: dark) {
+  :root { color: #eee; background-color: #1a1a1a; }
+  a { color: #eee; }
+  a:hover { color: #fff; }
+  input, button {
+    color: #eee;
+    background-color: #2a2a2a;
+    border-color: #444;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    background: #262626;
+    border-color: #444;
+    color: #eee;
+  }
+  .embed-platform-selector select { background: #262626; color: #eee; border-color: #444; }
+  .embed-advanced { border-color: #444 !important; }
+  input:not([type="checkbox"]):not([type="radio"])::placeholder,
+  textarea::placeholder { color: #9a9a9a; }
+  input:not([type="checkbox"]):not([type="radio"]):focus,
+  input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+  textarea:focus,
+  textarea:focus-visible {
+    border-color: #eee;
+    background: #2a2a2a;
+    box-shadow: 0 0 0 3px rgba(238,238,238,0.15);
+  }
+  button:hover { border-color: #eee; }
+  button:active { background-color: #333; }
+  .top-header, .sidebar, .profile-card, .profile-header-card, .note-card, .compose-section, .widget,
+  .conversation-item, .thread-wrap, .modal, .event, .reply-box, .search-bar-wrap { background: #2a2a2a; border-color: #444; }
+  .profile-banner-placeholder { background: #333; }
+  .note-thread.focused { outline-color: #eee; }
+  .profile-stats strong { color: #eee; }
+  .main-content { background: #1a1a1a; }
+  .side-nav button:hover { background: #333; }
+  .side-nav button.active { background: #333; color: #eee; }
+  .note-action-btn { background: #333; border-color: #444; color: #eee; }
+  .note-action-btn:hover { background: #3a3a3a; border-color: #555; }
+  .note-action-btn.is-active { background: #eee; color: #111; border-color: #eee; }
+  .note-action-btn.is-active:hover { background: #fff; border-color: #fff; }
+  .action-count { background: #2a2a2a; border-color: #444; color: #ccc; }
+  .note-action-btn.is-active .action-count { background: #111; border-color: #111; color: #eee; }
+  .queued-zaps { background: #eee; color: #111; border-color: #eee; }
+  .queued-zaps-count { background: #111; color: #eee; }
+  .info-icon { border-color: #666; color: #ccc; }
+  .info-icon::after { background: #eee; color: #111; }
+  .info-icon::before { border-top-color: #eee; }
+  .conversation-item:hover { background: #333; }
+  .conversation-list li.active .conversation-item { background: #333; }
+  .btn-primary { background: #eee; color: #111; border-color: #eee; }
+  .btn-primary:hover { background: #fff; border-color: #fff; }
+  .profile-avatar.placeholder, .compose-avatar { background: #eee; color: #111; }
+  .network-toggle.on { background: #eee; border-color: #eee; }
+  .network-toggle.on .toggle-thumb { background: #111; }
+  .network-toggle.on .toggle-state.on { color: #111; }
+  .muted, .profile-note, .profile-about, .relay-status, .note-time, .event-meta, .msg-meta { color: #b0b0b0; }
+  .note-avatar { color: #b0b0b0; }
+  .network-toggle .toggle-state.off, .network-status { color: #b0b0b0; }
+  .network-off-notice { color: #a0a0a0; }
+  .note-replies { border-left-color: #444; }
+  .note-reply { background: #2f2f2f; border-color: #444; }
+  .compose-body textarea,
+  .reply-box textarea,
+  .thread-reply textarea {
+    background: #262626;
+    border-color: #444;
+    color: #eee;
+  }
+  .compose-body textarea::placeholder,
+  .reply-box textarea::placeholder,
+  .thread-reply textarea::placeholder { color: #9a9a9a; }
+  .compose-body textarea:focus,
+  .compose-body textarea:focus-visible,
+  .reply-box textarea:focus,
+  .reply-box textarea:focus-visible,
+  .thread-reply textarea:focus,
+  .thread-reply textarea:focus-visible {
+    border-color: #eee;
+    background: #2a2a2a;
+    box-shadow: 0 0 0 3px rgba(238,238,238,0.15);
+  }
+  /* Profile tabs dark mode */
+  .profile-tabs { border-bottom-color: #444; }
+  .profile-tab { color: #999; }
+  .profile-tab:hover { color: #ccc; }
+  .profile-tab.active { color: #eee; border-bottom-color: #eee; }
+  /* Reply parent dark mode */
+  .note-parent { border-left-color: #444; }
+  .note-parent-missing { background: #333; }
+  .note-content-preview p { color: #999; }
+  .thread-connector { background: #444; }
+  /* Nsec reveal dark mode */
+  .identity-show-nsec-btn { background: #333; border-color: #444; color: #eee; }
+  .identity-show-nsec-btn:hover { background: #444; }
+  .identity-nsec-reveal { background: #3d3520; border-color: #8b7a40; }
+  .nsec-warning { color: #d4a84a; }
+  .nsec-value { background: #2a2a2a; border-color: #444; color: #eee; }
+  .nsec-copy-btn { background: #eee; color: #111; }
+  .nsec-copy-btn:hover { background: #fff; }
+  /* Identity: readable text and no blue */
+  .identity-view-desc, .identity-card-name { color: #eee; }
+  .identity-card { background: #2a2a2a; border-color: #444; }
+  .identity-card-type { background: #444; color: #ddd; }
+  .identity-card-type[data-type="nostr"] { background: #555; color: #eee; }
+  .identity-card-remove { color: #aaa; }
+  .identity-card-remove:hover { color: #f66; }
+  .identity-card-pubkey, .identity-card-pubkey .pubkey-copy { color: #b0b0b0; }
+  .identity-card-pubkey .pubkey-copy:hover { color: #eee; }
+  .identity-category-badge { background: #444; color: #eee; }
+  .identity-category-badge[data-category="nostr"] { background: #555; color: #eee; }
+  .identity-convert-btn { background: #333; border-color: #666; color: #eee; }
+  .identity-convert-btn:hover { background: #444; border-color: #888; }
+  .identity-convert-info { color: #b0b0b0; }
+  .identity-convert-info:hover { color: #eee; }
+  .identity-card-private { color: #b0b0b0; }
+  .acting-identity { color: #b0b0b0; }
+  .identity-card-view, .identity-card-act { color: #eee; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .toast-success { background: #1b3a1b; color: #81c784; border-color: #2e7d32; }
+  .toast-error { background: #3a1b1b; color: #ef9a9a; border-color: #c62828; }
+  .toast-info { background: #1b2a3a; color: #90caf9; border-color: #1565c0; }
+}
+
+@media (prefers-color-scheme: dark) means it is never
+   themed -- these read as light boxes on a dark page until covered here.
+   --------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  .stego-result.status { background: #1f3a24; border-color: #2f5c38; color: #d8ead9; }
+  .stego-result.error { background: #3a1f1f; border-color: #5c2f2f; color: #f0d5d5; }
+  .embed-note summary { color: #b0b0b0; }
+  .embed-note summary::before { border-color: #666; }
+  .embed-note summary:hover { color: #eee; }
+  .embed-note summary:hover::before { border-color: #999; }
+  .embed-note-body { background: #262626; border-left-color: #444; color: #b0b0b0; }
+  .embed-note-picker { background: #262626; border-color: #444; }
+  .embed-note-pick { border-bottom-color: #383838; }
+  .embed-note-pick:hover { background: #333; }
+}

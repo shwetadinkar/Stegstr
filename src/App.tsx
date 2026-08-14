@@ -2958,11 +2958,13 @@ function App({ profile }: { profile: string | null }) {
               <span className="toggle-state off">OFF</span>
               <span className="toggle-state on">ON</span>
             </button>
-            {!networkEnabled && (
-              <span className="network-off-notice" title="When Network is OFF, no data is sent over the internet. Detect and Embed run entirely in your browser.">
-                No internet — local only. Detect &amp; Embed stay in your browser; nothing is sent.
-              </span>
-            )}
+            <span
+              className="network-off-notice"
+              style={{ visibility: networkEnabled ? "hidden" : "visible" }}
+              title="When Network is OFF, no data is sent over the internet. Detect and Embed run entirely in your browser."
+            >
+              No internet — local only. Detect &amp; Embed stay in your browser; nothing is sent.
+            </span>
           </div>
           {actingIdentity && (
             <span className="acting-identity" title={`Acting as ${profiles[actingPubkey ?? ""]?.name || actingIdentity.label} (${(actingIdentity.category ?? (actingIdentity.type === "nostr" ? "nostr" : "local")) === "nostr" ? "Nostr" : "Local"})`}>
