@@ -2389,3 +2389,68 @@ paths disagree.
 - **The "Add to my feed" button is hidden when nothing is eligible.** It was
   offered alongside "Nothing new to add", where clicking it did nothing --
   which reads as the app being broken rather than as "no new content".
+
+### 17.11 Instagram: same encoder output, opposite results — and the pass-through lead
+
+Two Instagram round trips an hour apart, same cover, same profile, same
+delta 56, same pointer mode:
+
+```
+sent 18:48  ->  PSNR 41.0 dB   carrier drift p50 2.05   p99.9 13.86 (49.5% of margin)   PASS
+sent 19:48  ->  PSNR 32.0 dB   carrier drift p50 16.73  p99.9 149.95 (535% of margin)   DESTROYED
+```
+
+**The encoder output was identical.** Both sent files were measured against a
+clean, unembedded 1440x1440 render of the same original photo:
+
+| | PSNR vs clean | zigzag1 mean abs delta | p50 | blocks touched | total perturbation |
+|---|---|---|---|---|---|
+| 18:48 (passed) | 33.9 dB | 18.46 | 4.51 | 19,489 (60.2%) | 994,272 |
+| 19:48 (failed) | 33.9 dB | 18.54 | 4.52 | 19,498 (60.2%) | 996,084 |
+
+0.18% apart, which is just different random payload bits. The slot-ordering
+feature added between the two runs did **not** change ac-major encoding. The
+hypothesis that a code change caused the failure was tested and is false.
+
+Incidentally this confirms §17.3's model from the other direction: 60.2% of
+blocks touched matches the "covered about 60% from the top" observation by eye.
+`spread` touches only 34.2% at zigzag 1 but carries 3.7% MORE total
+perturbation across zigzag 1-6.
+
+**Delta cannot fix this.** Surviving the bad session needs `delta/2 > 150`, so
+delta > 300 against the 56 that already shows a visible crosshatch on flat
+areas (§10.4). Instagram's bad-session processing is not survivable at any step
+size that remains steganographic. §14.2's demotion was correct.
+
+**Do not over-read the "second hop passed" result.** Re-uploading an
+already-returned Instagram file passed twice, but those files carry Instagram's
+own quantization table and progressive encoding, so there is little left for
+the pipeline to change. A 2nd hop on Instagram's own output is an easy input,
+not evidence the 1st hop is reliable.
+
+### 17.12 Lead for the next improvement pass: mimic Instagram's own output
+
+**Idea:** encode Stegstr's Instagram output to look like an Instagram return --
+their measured luma quantization table (min 5, max 25, mean 15.84; chroma table
+equals luma) and progressive scan -- on the theory that Instagram reprocesses
+such an image lightly, which is what the 2nd-hop results hint at.
+
+**Blocked in the browser.** `canvas.convertToBlob({quality})` accepts a quality
+number only: no custom quantization table, no progressive flag (§6). Needs the
+Rust `jpeg-encoder` path or a WASM mozjpeg build, plus a phone test. Several
+hours, not a deadline-week item.
+
+**Two caveats to weigh before building it:**
+
+- The 2nd-hop evidence is confounded. Those files had been through Instagram's
+  *whole* pipeline -- resample, sharpen, re-encode. Matching the quantization
+  table and progressive flag copies only the final step, not the ones that did
+  the damage. A fresh upload may be resampled regardless of how it is encoded.
+- §10.3 measured Instagram's damage as **sharpening, not quantization**, which
+  is why matched tables were set aside for Instagram in the first place. This
+  lead does not overturn that; it proposes a different mechanism
+  (format-based pass-through) that has not been tested.
+
+**Cheapest test before any of it:** re-upload a failing sent file unchanged. If
+it passes on retry, Instagram is simply non-deterministic and no encoding work
+would have helped.
