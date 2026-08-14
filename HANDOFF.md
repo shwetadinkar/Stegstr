@@ -2659,3 +2659,29 @@ still render dark after every dark rule had been deleted.
   capacity. Every wrong call this session had that shape.
 - **Returns arrive as `.jfif`.** A `*.jpg`/`*.jpeg` search reported "nothing
   new" when three files were sitting there.
+
+### 18.7 Repository moved to a private repo
+
+Work now happens in **`https://github.com/shwetadinkar/stegstr-contest`**
+(private). Remotes are configured so `git push` goes there by default:
+
+```
+origin       stegstr-contest        private   <- default, branch `calibration` tracks origin/main
+publicfork   shwetadinkar/Stegstr   public    <- the old fork, kept for its release builds
+upstream     brunkstr/Stegstr       public    <- the project this forks
+```
+
+**Important and easy to misread: the public fork already contains everything.**
+Its `calibration` branch has all 88 commits including `HANDOFF.md` with every
+measurement and `CHANGES.md`. Moving to a private repo protects nothing
+retroactively -- the code has been publicly visible and MIT-licensed since it
+was first pushed. Only making the fork private or deleting it changes that, and
+either of those detaches it from upstream's network and takes its published
+releases with it.
+
+Pushing to `publicfork` remains the way to produce installers from the public
+release workflow, and costs no additional exposure for the same reason.
+
+**Note on the PAT:** pushing `.github/workflows/**` to a *new* repository needs
+the token's `workflow` scope. Updating existing workflow files does not, which
+is why this only surfaced on the first push to the private repo.
