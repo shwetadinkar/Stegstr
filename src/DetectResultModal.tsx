@@ -51,6 +51,7 @@ function kindLabel(kind: number): string | null {
   if (kind === 3) return "contacts";
   if (kind === 10002) return "relay list";
   if (kind === 4) return "message";
+  if (kind === 5) return "deletion";
   if (kind === 6) return "repost";
   if (kind === 7) return "reaction";
   return kind === 1 ? null : `kind ${kind}`;
@@ -256,14 +257,20 @@ export default function DetectResultModal({
           <button type="button" onClick={onClose}>
             {eligible.length === 0 ? "Close" : "Discard all"}
           </button>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={selected.size === 0}
-            onClick={() => onAccept([...selected])}
-          >
-            Add {selected.size > 0 ? selected.size : ""} to my feed
-          </button>
+          {/* With nothing eligible there is nothing the button could do, and
+              offering it anyway invites a click that silently does nothing --
+              which reads as the app being broken rather than as "no new
+              content". "Close" alone is the honest single choice. */}
+          {eligible.length > 0 && (
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={selected.size === 0}
+              onClick={() => onAccept([...selected])}
+            >
+              Add {selected.size > 0 ? selected.size : ""} to my feed
+            </button>
+          )}
         </div>
       </div>
     </div>

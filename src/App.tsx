@@ -1185,7 +1185,35 @@ function App({ profile }: { profile: string | null }) {
     console.log("[StegoLog]", msg);
   }, []);
 
+  // Live view of the feed state the detect handler classifies against.
+  //
+  // handleLoadFromImage reads `events` (and the sets derived from it) about
+  // thirty times, but none of them were in its dependency array -- only
+  // viewingPubkeys was. So the handler captured whatever feed existed the last
+  // time one of its listed deps changed, and kept classifying against that.
+  //
+  // The visible symptom: delete a note, decode an image containing it, and the
+  // review says "you already have everything this image contained". Deleting
+  // writes a kind-5 tombstone into `events`, which is exactly what tells the
+  // classifier the note is no longer held -- and the stale closure could not
+  // see it. It looked like a pointer-mode bug because toggling Network, which
+  // IS a dep, silently refreshed the closure and made the next decode correct.
+  //
+  // A ref rather than fixing the dep list: `handleLoadFromImage` is the
+  // identity a Tauri drag-drop listener is registered against, so adding
+  // `events` would tear down and re-register that listener on every feed
+  // change.
+  const detectStateRef = useRef({
+    events, importedEventIds, selfPubkeys, ourPubkeysSet, contactsSet,
+  });
+  detectStateRef.current = {
+    events, importedEventIds, selfPubkeys, ourPubkeysSet, contactsSet,
+  };
+
   const handleLoadFromImage = useCallback(async (providedPathOrFile?: string | File | null) => {
+    // Shadow the stale closure copies for the whole handler.
+    const { events, importedEventIds, selfPubkeys, ourPubkeysSet, contactsSet } =
+      detectStateRef.current;
     setDecodeError("");
     setStegoLogs([]);
     if (isWeb()) {
@@ -1706,7 +1734,20 @@ function App({ profile }: { profile: string | null }) {
         // score highly in packForCapacity's density ranking, so at any
         // capacity tight enough to matter they crowded out actual note text
         // from people you follow, or yourself.
-        const embedCandidates = events.filter((e) => ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey));
+        const embedCandidates = events.filter(
+          (e) => (ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey))
+            // Deletions are relay-propagated state, not content. A kind-5
+            // tombstone is ~380 bytes of pure overhead with no content, so
+            // packForCapacity scores it at roughly 2.3x the density of a real
+            // note and sorts it to the FRONT of the selection; the
+            // orphan-reply rule then drags the deleted note in alongside it,
+            // because a tombstone's ["e", id] tag looks like a reply. Net
+            // effect on a tight cover: the image preferentially carries a note
+            // you deleted plus the tombstone that deleted it, crowding out the
+            // note actually in your feed. Accepting it can also re-apply the
+            // deletion on the far side.
+            && e.kind !== 5
+            && !deletedNoteIds.has(e.id));
 
         // Helper: choose which events to carry, then encrypt to fit capacity.
         //

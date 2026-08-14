@@ -2334,3 +2334,58 @@ reaches the network needs the `networkEnabled` check on *both* sides, and the
 absence of one is not visible in tests -- nothing in the suite exercises the
 toggle. That is a gap: a test that asserts no socket is opened while the toggle
 is off would have caught this immediately.
+
+### 17.9 "You already have everything" after deleting — stale closure, not pointer mode
+
+Reported as a pointer-mode bug: delete a note, decode a pointer image
+containing it, and the review says *"Nothing new to add -- you already have
+everything this image contained"*, while the same test without pointer mode
+correctly offered the note.
+
+**It is not pointer-specific.** Both images were decoded and compared directly:
+each contained exactly one event, kind 1, id `c2a05d0618c29159…` -- the same
+event. The payloads were identical, so the difference had to be in
+classification, and it was.
+
+**Cause: `handleLoadFromImage` reads `events` about thirty times, plus
+`importedEventIds`, `selfPubkeys`, `ourPubkeysSet` and `contactsSet`, and none
+of them were in its `useCallback` dependency array** -- only `viewingPubkeys`
+was. The handler therefore classified against whatever feed existed the last
+time a listed dep changed.
+
+Deleting a note writes a kind-5 tombstone into `events`, and `tombstonedIds` is
+precisely what tells the classifier the note is no longer held. A stale closure
+cannot see the tombstone, so the note stays "duplicate".
+
+**Why it looked like pointer mode:** `networkEnabled` *is* a dep (added in
+§17.8). Toggling Network refreshes the closure, so any decode after a toggle
+classified correctly. The non-pointer test happened to follow a toggle.
+
+Fixed with a `detectStateRef` refreshed every render, destructured at the top of
+the handler so all thirty-odd reads see live state. A ref rather than a
+corrected dep list because `handleLoadFromImage` is the identity a Tauri
+drag-drop listener is registered against; adding `events` would tear down and
+re-register that listener on every feed change.
+
+**Method note worth keeping.** The decisive step was decoding both images and
+printing their contents, which took minutes and ended the speculation
+immediately. Two rounds of reasoning about *why pointer mode might differ*
+produced nothing, because the premise -- that the payloads differed -- was never
+checked. Check what is actually in the file before theorising about why two
+paths disagree.
+
+### 17.10 Also fixed in the same pass
+
+- **Deletions are no longer embedded.** `embedCandidates` now excludes kind 5
+  and anything tombstoned by one of your own kind-5 events. A tombstone is
+  ~380 bytes of pure overhead with no content, so `packForCapacity` scored it
+  at ~2.3x the density of a real note and sorted it to the FRONT of the
+  selection; the orphan-reply rule then pulled the deleted note in with it,
+  because a tombstone's `["e", id]` tag looks like a reply. On a tight cover
+  the image preferentially carried a note you deleted plus the tombstone that
+  deleted it, crowding out the note actually in your feed.
+- **`kindLabel` knows kind 5** ("deletion"), so a tombstone from an older image
+  reads as something rather than `kind 5`.
+- **The "Add to my feed" button is hidden when nothing is eligible.** It was
+  offered alongside "Nothing new to add", where clicking it did nothing --
+  which reads as the app being broken rather than as "no new content".
