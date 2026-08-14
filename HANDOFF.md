@@ -2554,3 +2554,108 @@ reads and the direction is not disproven.
 
 **Validation bar.** Stego-core change: real photo, not synthetic (§15.5), and a
 round trip on every channel that currently passes. Do not ship it on CI alone.
+
+---
+
+## 18. Product pass, and where things stand at T-15h
+
+Session of 2026-08-14 continued. **215 tests**, `tsc` and `npm run build` clean,
+19 commits, all pushed to `origin/calibration`.
+
+### 18.1 Platform results — all four channels pass
+
+```
+WhatsApp          universal        1600x1200    PASS
+Telegram (file)   telegram_file    no resize    PASS
+Telegram (photo)  telegram_photo   1280x960     PASS
+Instagram         instagram        1440 square  PASS  (see §17.13 on variability)
+```
+
+Every profile ships `ac-major`, `repeat 5`. One ordering, tested everywhere
+(§17.13). A test pins this so no profile drifts onto an untested setting.
+
+### 18.2 Features added this session
+
+- **Pointer tier** (§16-17): ~264 B in the image, feed encrypted on a relay.
+- **Choose which notes to embed.** Selection was automatic, by usefulness per
+  byte -- right for "back up my feed", impossible for "send this one message to
+  this one person". The dialog now offers the automatic default or an explicit
+  checkbox list. Verified in combination with recipients-only and pointer mode,
+  including that unselected notes appear nowhere in what leaves the machine.
+- **Adult-content filter on the Global feed**, on by default, leading with
+  NIP-36 `content-warning` tags rather than word matching.
+- **Cover-photo guidance in the UI**, at both points an image is chosen.
+  Detail is what hides data; the property is not one users would guess.
+- **Responsive layout.** The stylesheet had no breakpoints at all -- three
+  fixed columns totalling 620px of chrome, so a phone squeezed the content to
+  nothing and scrolled sideways. Stacks at 900px, with the stego panel FIRST,
+  since hiding data in an image is what someone opens this app to do.
+- **Product README** with platform targets, cover advice and troubleshooting.
+  Measurement tables deliberately stay here, not there.
+
+### 18.3 Dark theme is unloaded — read before re-enabling
+
+It shipped as `@media (prefers-color-scheme: dark)`, so every user with a dark
+OS got it automatically and had no control to escape it. Testing found it
+unusable. Rules preserved in `src/App.dark.css`, not imported.
+
+Two things must be true before it comes back:
+
+- Every element added since it was written needs dark rules; the newer UI has
+  none.
+- The **76 inline `style={{ }}` blocks** in the TSX cannot be reached from a
+  stylesheet and will stay light whatever the theme does.
+
+Related and easy to miss: the page now declares `color-scheme: light`. Without
+it a browser decides for itself -- Chrome's "Auto Dark Mode for Web Contents"
+force-inverts pages that express no preference, which is how the app could
+still render dark after every dark rule had been deleted.
+
+### 18.4 Bugs found and fixed this session
+
+- **Pointer resolution ignored the Network toggle** (§17.8). Detect fetched
+  from relays with the network off, while the banner promised nothing was
+  sent -- and the request names the exact event id being read. The worst class
+  of bug this app can have.
+- **Detect classified against a stale feed** (§17.9). `handleLoadFromImage`
+  read `events` ~30 times with none of it in the dependency array, so deleting
+  a note and re-decoding reported "you already have everything".
+- **Images carried deletions** (§17.10). A kind-5 tombstone is ~380 B of pure
+  overhead and scored ~2.3x the density of a real note, so it sorted to the
+  front of the packing and dragged the deleted note in behind it.
+- **`embedQim` ignored `buildCoeffStream`** (§17.6), recomputing positions with
+  a hardcoded AC-major formula while the detector iterated the stream. They
+  agreed only while the ordering happened to be AC-major.
+- **`publishAndConfirm` reported a false unanimous failure** on a cold pool,
+  because `publish` sends synchronously before handshakes finish.
+- **Header reflowed on every network toggle**, sliding the switch sideways: the
+  offline notice occupies a full-width row and was mounted/unmounted.
+
+### 18.5 What is left
+
+1. **Push `calibration` to `release`** to rebuild installers. The published
+   binaries predate everything in §18 -- the network gate, the stale-closure
+   fix, the note picker, the content filter, the responsive layout, the README.
+   One push, ~20 minutes unattended.
+2. **Check the built installer actually launches.** It builds; nobody has run
+   it. A binary that builds and will not start is worse than none.
+3. Mobile layout is written but has only been reasoned about, not seen on a
+   phone. DevTools device mode is the 30-second check.
+4. Post-deadline leads, in order: **§17.14 texture-selected block filling**
+   (best remaining invisibility idea), §17.12 Instagram format mimicry, dark
+   theme completion.
+
+### 18.6 Working notes earned today
+
+- **Check what is actually in the file before theorising about behaviour.**
+  Decoding both Instagram images and printing their contents ended a
+  speculation loop in minutes; two rounds of reasoning about why pointer mode
+  "might differ" produced nothing, because the premise -- that the payloads
+  differed -- was never checked.
+- **One variable per phone test.** Round 2 changed ordering *and* repetition
+  and could attribute nothing.
+- **Reason from the mechanism, not the abstraction.** "Capacity is spare so
+  repetition is free" is wrong: repetition spends modified coefficients, not
+  capacity. Every wrong call this session had that shape.
+- **Returns arrive as `.jfif`.** A `*.jpg`/`*.jpeg` search reported "nothing
+  new" when three files were sitting there.
