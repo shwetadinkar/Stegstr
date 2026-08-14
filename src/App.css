@@ -1135,3 +1135,66 @@ textarea { resize: vertical; min-height: 60px; }
 .embed-note-pick:hover { background: #f0f0f0; }
 .embed-note-pick input { margin-top: 0.15rem; flex-shrink: 0; }
 .embed-note-pick span { overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------------------
+   Dark mode for the elements added after the main dark block.
+   Appending CSS below @media (prefers-color-scheme: dark) means it is never
+   themed -- these read as light boxes on a dark page until covered here.
+   --------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  .stego-result.status { background: #1f3a24; border-color: #2f5c38; color: #d8ead9; }
+  .stego-result.error { background: #3a1f1f; border-color: #5c2f2f; color: #f0d5d5; }
+  .embed-note summary { color: #b0b0b0; }
+  .embed-note summary::before { border-color: #666; }
+  .embed-note summary:hover { color: #eee; }
+  .embed-note summary:hover::before { border-color: #999; }
+  .embed-note-body { background: #262626; border-left-color: #444; color: #b0b0b0; }
+  .embed-note-picker { background: #262626; border-color: #444; }
+  .embed-note-pick { border-bottom-color: #383838; }
+  .embed-note-pick:hover { background: #333; }
+}
+
+/* ---------------------------------------------------------------------------
+   Narrow screens.
+   The layout was three fixed columns (260px nav + content + 360px stego panel)
+   with no breakpoint at all, so on a phone the content column was squeezed to
+   nothing and the page scrolled sideways. Stacking is the honest fix: this is
+   a tool with two panels of controls, not a layout that can be responsive by
+   reflow alone.
+   --------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .primal-layout .body-wrap { flex-direction: column; }
+  .sidebar,
+  .sidebar.right {
+    width: auto;
+    border-left: none;
+    border-right: none;
+    border-bottom: 1px solid #ddd;
+    padding: 0.75rem 1rem;
+  }
+  /* Stego panel first on a phone: hiding data in an image is what someone
+     opens this app to do, and it was below the entire feed. */
+  .sidebar.right { order: -1; border-bottom: 1px solid #ddd; }
+  .main-content { padding: 0.75rem; }
+  .top-header { flex-wrap: wrap; gap: 0.4rem; padding: 0.5rem 0.75rem; }
+  .top-header h1 { font-size: 1.05rem; }
+  .search-bar-wrap { width: 100%; order: 10; }
+  .side-nav { flex-direction: row; flex-wrap: wrap; gap: 0.35rem; }
+  .side-nav button { flex: 0 0 auto; padding: 0.4rem 0.7rem; font-size: 0.85rem; }
+  .modal { width: 94%; max-width: none; padding: 1rem; max-height: 88vh; overflow-y: auto; }
+  .modal-wide { width: 94%; }
+  .stego-drop-zone { min-height: 92px; padding: 1.5rem 1rem; }
+  .network-off-notice { display: block; width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .note-card, .compose-section, .widget { padding: 0.7rem; }
+  .modal { padding: 0.85rem; }
+  .embed-note-picker { max-height: 140px; }
+  /* Buttons wrap rather than overflow the card on a narrow phone. */
+  .note-actions { flex-wrap: wrap; gap: 0.3rem; }
+}
+
+@media (max-width: 900px) and (prefers-color-scheme: dark) {
+  .sidebar, .sidebar.right { border-bottom-color: #444; }
+}
