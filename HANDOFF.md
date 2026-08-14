@@ -2254,3 +2254,49 @@ a phone round trip on a real photo (§15.5). Until then this is a change that
 passes CI, not a result. The comparison to shoot is the same cover, pointer
 mode on, `telegram_photo`, against the returned file from §17.1 -- which is
 already on disk and was made with ac-major, so it is a like-for-like control.
+
+### 17.7 Round 2 came back WORSE, and why — repetition is not free
+
+Phone test of §17.6 (spread + repeat 15) on the same cover: **visibly worse
+than round 1**. The channel was not the cause -- PSNR 52.0 dB and p99.9 carrier
+drift 4.04 against round 1's 52.0 dB and 3.89, i.e. identical. The image itself
+was noisier before it was ever sent.
+
+**Cause: `repeat` 5 -> 15 tripled the number of modified coefficients.**
+
+```
+round 1  repeat 5 :  13,960 coefficients modified  (12.1% of slots)
+round 2  repeat 15:  41,880 coefficients modified  (36.4% of slots)
+```
+
+§17.4's table claimed "repeat up: visibility unchanged". **That is wrong and
+the table has been corrected.** Repetition spends two things, not one: capacity
+*and* perturbation, one modified coefficient per copy. Capacity was the
+abundant resource; visible perturbation was the scarce one, and they were
+treated as the same.
+
+The premise was weak anyway. Q75 quantization steps across zigzag 1-6 are
+**6, 6, 7, 7, 5, 8** -- flat. So spreading from zigzag 1 into 2-6 changes
+neither the amplitude of a delta-28 step nor, by much, its survivability, which
+means there was little for the extra repetition to buy.
+
+**Also a bad experiment.** Round 2 changed the ordering AND the repeat, so it
+cannot say which one hurt -- the same mistake as diffing the two sent images in
+§17.3. One variable at a time.
+
+**Corrected table (replaces the one in §17.4):**
+
+| lever | visibility | robustness |
+|---|---|---|
+| delta down | better | worse |
+| spread across zigzag 1-6 | better (untested) | slightly worse |
+| repeat up | **worse, 1 coefficient per copy** | better |
+
+**Current state:** `telegram_photo` is `slotOrder: "spread"` with repeat back at
+the default 5, so the next test isolates the ordering change against round 1's
+ac-major return, which is on disk and used the same cover and payload size. A
+test pins `repeat` as unset so raising it again has to be deliberate.
+
+If round 3 is still no better than round 1, the honest conclusion is that slot
+ordering is not where the visibility win lives at this delta, and the remaining
+lever is delta itself (§17.2 measured the headroom: 28 to ~20).

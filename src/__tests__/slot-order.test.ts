@@ -18,6 +18,20 @@ beforeAll(() => {
  * coherent grating human vision picks out best.
  */
 describe("slot ordering", () => {
+  /**
+   * Repetition is not free, and a comment is not enough to keep it that way.
+   *
+   * §17.4 reasoned that capacity was spare so `repeat` could be raised to pay
+   * for spreading. Capacity is not what repetition spends: every repeat is
+   * another modified coefficient, so repeat 15 tripled the perturbation
+   * (12.1% of slots to 36.4%) and the phone test came back visibly worse
+   * (§17.7). Pinning the value here so raising it again has to be deliberate.
+   */
+  it("telegram_photo does not raise repeat above the default", async () => {
+    const { profileFor } = await import("../stego-adaptive");
+    expect(profileFor("telegram_photo").repeat).toBeUndefined();
+  });
+
   it("telegram_photo carries a pointer-sized payload and reads it back", async () => {
     const { encodeQimImageFile, decodeQimImageFile, qimSelfTest } = await import("../stego-qim");
     const cover = new File([makeCoverJpeg(2400, 1800, 11)], "c.jpg", { type: "image/jpeg" });

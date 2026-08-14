@@ -158,11 +158,17 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     // §17.4: at a 264 B pointer this profile used 12.1% of capacity but put
     // 100% of the perturbation on zigzag 1 across 72.7% of blocks -- a
     // coherent grating in the most visible frequency there is. "spread"
-    // scatters the same energy over all six positions and the whole frame;
-    // repeat 15 (up from 5) buys back the robustness that costs, and still
-    // uses only ~36% of capacity.
+    // scatters the same energy over all six positions and the whole frame.
+    //
+    // repeat stays at the default 5. It was briefly raised to 15 on the theory
+    // that spreading costs robustness and capacity was spare -- but capacity
+    // is not what repetition spends. Every repeat is another MODIFIED
+    // COEFFICIENT: repeat 15 tripled the perturbation from 12.1% of slots to
+    // 36.4%, and the round-2 phone test came back visibly worse than round 1
+    // (§17.7). The premise was weak besides: Q75 steps across zigzag 1-6 are
+    // 6,6,7,7,5,8 -- flat enough that spreading costs little to begin with.
     width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    slotOrder: "spread", repeat: 15,
+    slotOrder: "spread",
     note: "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled "
       + "and lost. Send as FILE instead if you need capacity; that path does not recompress.",
   },
