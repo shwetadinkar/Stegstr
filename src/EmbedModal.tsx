@@ -241,6 +241,13 @@ export function EmbedModal({
             />
             {" "}Pick specific notes
           </label>
+          {/* A disabled radio with no reason next to it just looks broken.
+              Say why it is unavailable. */}
+          {selectableNotes.length === 0 && (
+            <span className="muted" style={{ fontSize: "0.78rem", marginLeft: "0.4rem" }}>
+              — you have not written any notes yet
+            </span>
+          )}
 
           {selectedNoteIds !== null && (
             <div style={{ marginTop: "0.5rem" }}>

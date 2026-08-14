@@ -151,7 +151,8 @@ button:active { background-color: #eee; }
   transform: translateX(1.1rem);
   background: #fff;
 }
-.network-toggle .toggle-state { font-weight: 600; min-width: 1.8rem; }
+.network-toggle { min-width: 5.4rem; justify-content: flex-start; }
+.network-toggle .toggle-state { font-weight: 600; min-width: 2.2rem; text-align: center; }
 .network-toggle .toggle-state.off { color: #666; }
 .network-toggle .toggle-state.on { color: transparent; width: 0; overflow: hidden; min-width: 0; }
 .network-toggle.on .toggle-state.off { color: transparent; width: 0; overflow: hidden; min-width: 0; }
