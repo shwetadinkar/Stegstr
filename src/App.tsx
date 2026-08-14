@@ -60,9 +60,22 @@ async function followPointerIfAny(
   jsonString: string,
   ourPrivKeyHex: string,
   log: (message: string) => void,
+  networkEnabled: boolean,
 ): Promise<string> {
   const pointer = parsePointer(jsonString);
   if (!pointer) return jsonString;
+  // Network OFF must mean off. Every other network path in this file is gated
+  // on this flag; this one was not, so opening a pointer image with the toggle
+  // off still queried relays -- while the banner promised "nothing is sent".
+  // Worse than a wrong toggle: the request names the exact event id being
+  // read, so it tells four relays which hidden payload someone just opened, in
+  // an app whose entire premise is that nobody can tell.
+  if (!networkEnabled) {
+    throw new PointerUnresolved(
+      "This image holds a link to content on a relay, and Network is off. Turn Network on to " +
+      "fetch it — note that doing so tells the relay which image you are reading.",
+    );
+  }
   log(
     `Pointer payload: event ${pointer.i.slice(0, 12)}..., ` +
     `${pointer.r?.length ?? 0} relay hint(s), ${pointer.k ? "keyed" : "recipients-only"}`,
@@ -1299,7 +1312,7 @@ function App({ profile }: { profile: string | null }) {
         }
         // A pointer image decrypts to a pointer, not a bundle; fetch what it
         // names before anything downstream can treat it as content.
-        jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog);
+        jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog, networkEnabled);
         const bundle = JSON.parse(jsonString) as NostrStateBundle;
         if (!Array.isArray(bundle.events)) {
           setDecodeError("Invalid payload");
@@ -1478,7 +1491,7 @@ function App({ profile }: { profile: string | null }) {
       }
       // See the browser detect path above: a pointer image decrypts to a
       // pointer, and the content it names has to be fetched first.
-      jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog);
+      jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog, networkEnabled);
       const bundle = JSON.parse(jsonString) as NostrStateBundle;
       if (!Array.isArray(bundle.events)) {
         setDecodeError("Invalid payload");
@@ -1546,7 +1559,7 @@ function App({ profile }: { profile: string | null }) {
       setDetecting(false);
       setStegoProgress("");
     }
-  }, [effectivePrivKey, identities, viewingPubkeys, addStegoLog]);
+  }, [effectivePrivKey, identities, viewingPubkeys, addStegoLog, networkEnabled]);
 
   useEffect(() => {
     if (isWeb()) return;

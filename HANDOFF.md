@@ -2300,3 +2300,37 @@ test pins `repeat` as unset so raising it again has to be deliberate.
 If round 3 is still no better than round 1, the honest conclusion is that slot
 ordering is not where the visibility win lives at this delta, and the remaining
 lever is delta itself (§17.2 measured the headroom: 28 to ~20).
+
+### 17.8 Pointer resolve ignored the Network toggle — privacy bug, fixed
+
+Found by opening a pointer image with **Network OFF** and watching it decode
+anyway.
+
+`followPointerIfAny` called `fetchEventById` with no gate. Every other network
+path in `App.tsx` is guarded by `networkEnabled` -- more than twenty call sites
+-- and this one was not, because it was added with the pointer tier and the
+guard was never carried over. `RelayPool` has no knowledge of the app-level
+toggle, so the sockets opened and the blob was fetched.
+
+The banner in that state reads *"No internet -- local only. Detect & Embed stay
+in your browser; nothing is sent."* For pointer images it was false.
+
+**Why this is more than a wrong switch.** The fetch names the exact event id
+being read. So opening a hidden image told four relays which payload someone
+had just opened, and roughly when -- in an application whose entire premise is
+that nobody can tell. A user who deliberately turned the network off to read
+something quietly got the opposite of what the UI promised.
+
+Detect now refuses a pointer with the network off and says why, including that
+turning it on is itself observable:
+
+> This image holds a link to content on a relay, and Network is off. Turn
+> Network on to fetch it -- note that doing so tells the relay which image you
+> are reading.
+
+**Generalisation worth acting on:** the embed side had this guard from the
+start (§17 pointer branch), the detect side did not. Any new capability that
+reaches the network needs the `networkEnabled` check on *both* sides, and the
+absence of one is not visible in tests -- nothing in the suite exercises the
+toggle. That is a gap: a test that asserts no socket is opened while the toggle
+is off would have caught this immediately.
