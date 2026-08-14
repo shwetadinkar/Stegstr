@@ -112,19 +112,40 @@ button:active { background-color: #eee; }
 .queued-zaps-label { font-size: 0.75rem; opacity: 0.85; }
 
 /* Network toggle */
-.network-toggle-wrap { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+/* Fixed width and a fixed anchor for the switch.
+   The offline notice used to sit in this flex container on a full-width line,
+   so the container's size changed with the network state and dragged the
+   switch across the header. Reserving space or hiding the text was not enough
+   -- anything in normal flow can still move it. The notice is now positioned
+   absolutely, out of the flow entirely, so nothing it does can reach the
+   control. */
+.network-toggle-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  position: relative;
+  width: 11rem;
+  flex: 0 0 11rem;
+}
 .network-label { font-size: 0.9rem; font-weight: 500; }
 /* The offline notice occupies a full row of its own, so it appearing and
    disappearing reflowed the whole header and slid the switch sideways. The row
    is now always present and only its contents are hidden, which keeps every
    other element still. */
 .network-off-notice {
-  flex-basis: 100%;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.3rem;
+  width: max-content;
+  max-width: 26rem;
   font-size: 0.75rem;
   color: #555;
-  margin-top: 0.35rem;
-  margin-left: 0;
   line-height: 1.35;
+  text-align: right;
+  pointer-events: none;
 }
 .network-toggle {
   display: inline-flex;
