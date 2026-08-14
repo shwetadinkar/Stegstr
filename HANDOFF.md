@@ -2064,3 +2064,193 @@ Two things this run surfaced that are worth carrying forward:
   hour before the README claims anything about publishing reliability.**
   Caveat before chasing it: the test pubkey was brand new with no kind 0 or
   kind 3, which is not how a real user's first post looks.
+
+---
+
+## 17. Pointer tier verified on Telegram, and Telegram's re-encode measured
+
+Round 1 of the pointer tier, 2026-08-14, on a real Android phone.
+
+### 17.1 It works
+
+`telegram_photo` + pointer mode -> Telegram as photo -> return -> Detect ->
+review modal lists the notes. **PASS.** Geometry survived exactly: 1280x960
+uploaded, 1280x960 returned, both with and without pointer mode. Returns are
+progressive JPEGs where the sent files were baseline, which confirms Telegram
+genuinely re-encoded rather than passing the file through.
+
+The pointer carried a **3921 B bundle through a cover with 2483 B of
+capacity** -- self-contained mode could not have sent that feed at all without
+dropping events. That result stands independently of how the image looks.
+
+### 17.2 Telegram's re-encode cost (closes §15.15 item 1)
+
+```
+                     PSNR     carrier (0,1) drift, raw DCT units
+Telegram photo      52.0 dB   p50 0.31  p90 1.09  p99 2.46  p99.9 3.89  max 6.17
+WhatsApp (§15.1)    45.3 dB   p50 0.35  p90 1.01  p99 1.77  p99.9 3.95  max 6.50
+```
+
+**Telegram is gentler on PSNR but identical on the carrier** -- p99.9 drift 3.89
+against WhatsApp's 3.95. The two channels cost the same where it matters, which
+is the coefficient the payload actually lives in.
+
+Headroom for lowering delta, stated both ways because §15.3 makes it ambiguous:
+against nominal delta 28 (margin 14) the drift is 28% of margin; against
+§15.3's measured *effective* ~12.6 (margin 6.3) it is 62%. The second is the
+honest one. Delta can come down, but modestly -- 28 to ~20, not 28 to 14.
+
+Repeatable via `calibration/analyze_pointer_pair.py SENT RETURNED`.
+
+### 17.3 Why a 60x smaller payload is only slightly less visible
+
+Exact slot usage, computed from the shipped constants at 1280x960:
+
+| | slots used | AC positions | blocks touched | coeffs/block |
+|---|---|---|---|---|
+| pointer 264 B | 13,960 (**12.1%**) | **1 of 6** | **72.7%** | 1.00 |
+| full 2483 B | 115,520 (100%) | 6 of 6 | 100% | 6.02 |
+
+`buildCoeffStream` is AC-major: it fills zigzag 1 across *every block* before
+touching zigzag 2. So a small payload modifies 8.3x fewer coefficients and
+still covers 73% of the frame -- and puts **100% of its perturbation into
+zigzag position 1**, which §15.2 measured as the coherent 8-pixel grating human
+vision detects best. The full payload at least dilutes across zigzag 1-6.
+
+**The pointer tier delivers the saving; the slot ordering spends it in the
+worst available place.** That is the whole explanation for "I expected a huge
+difference and got a small one".
+
+A warning about measuring this: diffing the two *sent* images against each
+other does not work. It measures the union of both payloads and is dominated by
+the larger one, which produced a meaningless "92% of blocks differ". The table
+above comes from the encoder's own arithmetic, not from image comparison.
+
+### 17.4 The three currencies, and the trap in spending them
+
+At 12% occupancy the saving can be spent three ways, and they are not
+equivalent:
+
+| lever | visibility | robustness |
+|---|---|---|
+| delta down | better | worse |
+| spread across zigzag 1-6 | better | **worse** |
+| repeat up | unchanged | better |
+
+Spreading is **not free**, contrary to how it first looks. Within zigzag 1-6
+lower is more survivable (§10.4 option 2 -- sharpening hits high frequencies
+hardest, which is why `lumaAcCount` was cut to 6). A pointer currently sits
+entirely on zigzag 1, the single most robust coefficient available. Moving bits
+to 2-6 buys invisibility with robustness.
+
+Repetition is the one lever that is genuinely affordable here: `repeat` 5 to 15
+still uses only ~36% of capacity. So the safe combination is **spread the
+frequencies and raise repeat to pay for it, leaving delta alone.**
+
+Two constraints on any of it:
+
+- **Delta is per-profile.** `universal` (WhatsApp) and `telegram_photo` are
+  separate entries, so Telegram tuning cannot regress the WhatsApp pass. Do not
+  touch `universal` without a WhatsApp round trip of its own -- it is the only
+  confirmed pass on the platform the holder tests first.
+- **Changing slot ordering changes the decoder.** Images made by the current
+  build stop decoding unless the ordering is tied to the profile or a version
+  byte. Decide that before writing code, not after a returned file fails.
+
+### 17.5 Priority review at T-24h — read this before writing any more encoder code
+
+Written 2026-08-14 with roughly 24 hours left, after a session that had drifted
+into encoder research. Recording the reasoning because the drift was not
+obvious from inside it.
+
+**What the contest is judged on** (§1): invisibility, survival through
+WhatsApp/Telegram/Instagram, networking reliability. Plus agent operability and
+"more platforms is better". The holder runs submissions himself and there is no
+defined test procedure.
+
+**What is done:** WhatsApp PASS, Telegram-as-file PASS, Telegram-as-photo PASS,
+pointer tier built and phone-verified, kind 30078 verified on live relays, 209
+tests, `tsc` and build clean.
+
+**What is not done, and is worth more than any remaining encoder work:**
+
+1. **The release workflow has never been triggered on this fork.** It has been
+   in the "do this early" position of §2 since the first version of this
+   document and is still undone. Upstream's `release.yml` builds macOS
+   (Intel + Apple Silicon), Windows and Linux. The holder said *"Mac, PC, more
+   is better."* The cost is a `git tag` and a push. **Highest value per minute
+   available, by a wide margin, and it needs lead time for CI to fail and be
+   fixed.**
+2. **The README still has no measurement tables.** 61 lines, zero measured
+   numbers. §1 identified this as where a submission "sets the terms of
+   comparison" against 34 entries, and it is the only artefact that makes the
+   channel work legible to someone who will not read the code.
+3. **Instagram ships a profile that has not been verified since §14.2.** The
+   brief names Instagram as one of three platforms. Shipping a default that
+   silently fails is worse than documenting it as unsupported with the §10.3
+   explanation, which is a genuinely interesting finding in its own right.
+
+**Why the AC-spreading change (§17.4) is the wrong thing to build now.** It
+touches the stego core, so §15.5 requires verifying it against a real photo,
+which means another phone round trip. It breaks decode compatibility unless
+versioned first. It moves bits off the most robust coefficient available. And
+it risks a working PASS on the one channel measured today. Expected value at
+T-24h is negative -- not because the idea is wrong (it is the best remaining
+encoder idea) but because it cannot be validated in the time left.
+
+**Suggested order for the remaining time:**
+
+1. Tag and trigger the release build. Do it first; it runs while you do
+   everything else, and CI failures need slack to fix.
+2. The kind-5 embed fix (§17.6) -- small, specified, and stops the app showing
+   a judge content the user deleted.
+3. README with the measurement tables from §15, §16 and §17.
+4. Decide Instagram: re-verify, or document as unsupported and remove it from
+   the default choices.
+5. Only with time genuinely spare: §17.4, on `telegram_photo` only.
+
+### 17.6 §17.4 built: spread slot ordering on telegram_photo
+
+**213 tests**, `tsc` and build clean. `telegram_photo` now ships
+`slotOrder: "spread", repeat: 15`. Nothing else changed profile.
+
+**A latent bug found while building it, and this one matters beyond §17.4.**
+`embedQim` did not use the stream `buildCoeffStream` returned. It recomputed
+the position inline as `zi * blocksPerPlane + br * blocksX + bc` -- the
+AC-major formula, hardcoded -- and used the stream only to decide which blocks
+to touch. `detectQim` *does* iterate the stream. So the two agreed only as long
+as the ordering happened to be AC-major, and any change to `buildCoeffStream`
+would have been silently ignored on the embed side while the detector honoured
+it. First symptom was spread failing its own round trip at every repeat value.
+
+Embedding now derives an explicit inverse map from the stream, so the two sides
+cannot disagree again. **Anyone touching slot ordering should know this trap
+existed**: the encoder looked like it was driven by `buildCoeffStream` and was
+not.
+
+**Compatibility.** Ordering is not recoverable from a file -- a wrong order
+reads the right coefficients in the wrong sequence and fails exactly like a
+wrong delta. The blind sweep therefore tries both orderings for every
+zigzag-restricted profile, and a test asserts an ac-major image still decodes
+now that the profile declares spread. Cost is one extra detect attempt per
+profile in that phase.
+
+**Capacity.** `getQimCapacityForFile` now passes `repeat` from the profile. It
+did not before, so with repeat 15 it would have quoted the repeat-5 figure and
+overstated capacity 3x -- the packer would fill to a budget the encoder cannot
+carry and fail after the work was done. telegram_photo capacity is now
+**819 B** (was 2483 B at repeat 5), which still comfortably holds a 264 B
+pointer at ~32%.
+
+**What is verified and what is not.** Verified: round trip through the real
+shipped encoder, old-image compatibility, and that the mapping is a bijection
+covering every slot exactly once. The distribution claim is verified directly
+on the mapping -- for a 13,960-slot payload, ac-major uses 1 of 6 frequencies
+and 73% of block rows; spread uses 6 of 6 and 100% of rows, at the same one
+coefficient per block.
+
+**NOT verified: that it looks better, or that it survives Telegram.** Both need
+a phone round trip on a real photo (§15.5). Until then this is a change that
+passes CI, not a result. The comparison to shoot is the same cover, pointer
+mode on, `telegram_photo`, against the returned file from §17.1 -- which is
+already on disk and was made with ac-major, so it is a like-for-like control.

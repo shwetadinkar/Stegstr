@@ -160,14 +160,31 @@ export async function publishAndConfirm(
   const targets = router.publishTargets(event, 8);
   const chosen = targets.length ? targets : relays;
   void outbox.enqueue(event, chosen);
-  const results = await pool.publish(event, chosen, timeoutMs);
-  const accepted: string[] = [];
-  const failed: Record<string, string> = {};
-  for (const [url, r] of Object.entries(results)) {
-    if (r.ok) accepted.push(url);
-    else failed[url] = r.message || "rejected";
+
+  // Wait for the handshakes before asking. Without this, a cold pool reports
+  // "not connected" for every relay and the caller concludes nothing would
+  // accept the event, when in truth nothing was ever asked.
+  await pool.ensureConnected(chosen);
+
+  const collect = (results: Record<string, { ok: boolean; message: string }>) => {
+    const accepted: string[] = [];
+    const failed: Record<string, string> = {};
+    for (const [url, r] of Object.entries(results)) {
+      if (r.ok) accepted.push(url);
+      else failed[url] = r.message || "rejected";
+    }
+    return { accepted, failed };
+  };
+
+  let out = collect(await pool.publish(event, chosen, timeoutMs));
+  // One retry, but only for the case that retrying can actually fix: every
+  // relay unreachable rather than any relay refusing. A rejection is a verdict
+  // and asking again just wastes the user's time.
+  if (out.accepted.length === 0 && Object.values(out.failed).every((m) => m === "not connected")) {
+    await pool.ensureConnected(chosen);
+    out = collect(await pool.publish(event, chosen, timeoutMs));
   }
-  return { accepted, failed };
+  return out;
 }
 
 /**

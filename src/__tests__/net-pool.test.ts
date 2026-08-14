@@ -231,3 +231,44 @@ describe("NIP-65 routing", () => {
     expect(router.writeRelaysFor("stranger")).toEqual(["wss://fallback"]);
   });
 });
+
+describe("ensureConnected", () => {
+  /**
+   * The cold-pool bug, pinned.
+   *
+   * `publish` sends synchronously, so on a pool whose handshakes have not
+   * finished it marks every relay "not connected" and the caller concludes
+   * nothing would accept the event -- when nothing was ever asked. Harmless
+   * for `publishEvent`, which has the Outbox retrying behind it; fatal for the
+   * pointer tier, which aborts the embed on a unanimous failure and told a
+   * real user their relay list was broken when the sockets were merely still
+   * opening.
+   */
+  it("publishing on a cold pool reports a false 'not connected' for every relay", async () => {
+    const pool = new RelayPool((u) => new FakeSocket(u), Date.now, fastBackoff);
+    const relays = ["wss://a", "wss://b"];
+    // No connect() call: sockets exist but are still CONNECTING, exactly as
+    // they are in the moment after the app opens them.
+    const res = await pool.publish(ev("e1"), relays, 50);
+    expect(Object.values(res).every((r) => !r.ok && r.message === "not connected")).toBe(true);
+  });
+
+  it("waits for a socket to open, so the same publish succeeds", async () => {
+    const pool = new RelayPool((u) => new FakeSocket(u), Date.now, fastBackoff);
+    const relays = ["wss://a", "wss://b"];
+    const ready = pool.ensureConnected(relays, 2000);
+    // Handshakes complete a moment later, as they do in reality.
+    setTimeout(() => FakeSocket.all.forEach((s) => s.connect()), 20);
+    const open = await ready;
+    expect(open.length).toBeGreaterThan(0);
+
+    const res = await pool.publish(ev("e2"), relays, 200);
+    expect(Object.values(res).some((r) => r.ok)).toBe(true);
+  });
+
+  it("returns on timeout rather than hanging when no relay ever opens", async () => {
+    const pool = new RelayPool((u) => new FakeSocket(u), Date.now, fastBackoff);
+    const open = await pool.ensureConnected(["wss://dead"], 150);
+    expect(open).toEqual([]);
+  });
+});

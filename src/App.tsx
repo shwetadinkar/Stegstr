@@ -1840,6 +1840,23 @@ function App({ profile }: { profile: string | null }) {
           // NEW blob event each time, so the image would end up pointing at an
           // event id that was never published.
           if (embedPointerMode) {
+            // Checked before any work, because pointer mode is the one embed
+            // path that cannot function offline -- the content goes to a relay
+            // by definition. Reaching the publish step with the network toggle
+            // off produces "no relay accepted the blob", which is true but
+            // reads as a relay problem and sends the user to check their relay
+            // list instead of the switch that is actually off.
+            if (!networkEnabled) {
+              setDecodeError(
+                "Pointer mode sends your feed to a relay, so it needs the network — and Network is " +
+                "currently off. Turn it on, or untick “Send a link instead of the content” to embed " +
+                "everything in the image, which works offline.",
+              );
+              addStegoLog("Embed cancelled: pointer mode requires the network, which is disabled.");
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
             if (!effectivePrivKey) {
               setDecodeError("Pointer mode needs a signing key — log in with an identity first.");
               setEmbedding(false);
@@ -2288,7 +2305,7 @@ function App({ profile }: { profile: string | null }) {
       setEmbedding(false);
       setStegoProgress("");
     }
-  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, effectivePrivKey, embedMethod, targetPlatform]);
+  }, [embedModalOpen, embedCoverFile, events, profiles, identities, addStegoLog, embedRecipientMode, embedRecipients, embedPointerMode, networkEnabled, effectivePrivKey, embedMethod, targetPlatform]);
 
   const resolvePubkeyFromInput = useCallback((input: string): string | null => {
     const s = input.trim().replace(/\s/g, "");

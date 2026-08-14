@@ -83,6 +83,9 @@ export const DEFAULT_PLATFORM = "whatsapp_standard";
 // Options
 // ---------------------------------------------------------------------------
 
+/** Slot visiting order; see QimOptions.slotOrder (§17.4). */
+export type SlotOrder = "ac-major" | "spread";
+
 export interface QimOptions {
   /** JPEG quality for output encoding (1-100). Default 75. */
   quality?: number;
@@ -92,6 +95,24 @@ export interface QimOptions {
   repeat?: number;
   /** Reed-Solomon parity symbol count. Default 128. */
   rsNsym?: number;
+  /**
+   * Slot ordering (§17.4).
+   *
+   * "ac-major" fills zigzag 1 across every block before touching zigzag 2, so
+   * a payload smaller than one AC position lands entirely on zigzag 1 in the
+   * top rows -- 100% of the perturbation in the single most visible frequency,
+   * measured as a coherent 8-pixel grating (§15.2). Fine when the payload
+   * fills the frame anyway; wasteful once the pointer tier made payloads
+   * small.
+   *
+   * "spread" walks the same slot space on a coprime stride, so any payload
+   * scatters uniformly across all AC positions and the whole frame. Same
+   * energy, incoherent rather than gratinged, and no top-band concentration.
+   *
+   * MUST match between embed and decode. It is profile-keyed and the blind
+   * sweep tries both, so images made before this option still decode.
+   */
+  slotOrder?: SlotOrder;
   /** Whether to compress payload with deflate before embedding. Default true. */
   compress?: boolean;
   /**
@@ -259,7 +280,44 @@ interface CoeffPosition {
   zigzagIdx: number;
 }
 
-function buildCoeffStream(blocksY: number, blocksX: number, acCount: number = AC_INDICES.length): CoeffPosition[] {
+/**
+ * Largest stride below the golden-ratio point that is coprime with `total`.
+ *
+ * Coprimality is what makes `i -> (i * stride) % total` a bijection, so every
+ * slot is still used exactly once; the golden-ratio starting point is the
+ * standard choice for spreading successive indices as evenly as possible.
+ * Derived from `total` alone, so encoder and decoder agree without carrying it
+ * in the payload.
+ */
+function spreadStride(total: number): number {
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  let s = Math.max(1, Math.floor(total * 0.6180339887));
+  while (s > 1 && gcd(s, total) !== 1) s--;
+  return s < 1 ? 1 : s;
+}
+
+function buildCoeffStream(
+  blocksY: number,
+  blocksX: number,
+  acCount: number = AC_INDICES.length,
+  slotOrder: SlotOrder = "ac-major",
+): CoeffPosition[] {
+  if (slotOrder === "spread") {
+    // Same slot set as AC-major, visited on a coprime stride so a partial
+    // payload covers all frequencies and the full frame instead of saturating
+    // zigzag 1 from the top down.
+    const blocks = blocksY * blocksX;
+    const total = blocks * acCount;
+    const stride = spreadStride(total);
+    const out: CoeffPosition[] = new Array(total);
+    for (let i = 0; i < total; i++) {
+      const j = (i * stride) % total;
+      const zi = Math.floor(j / blocks);
+      const b = j % blocks;
+      out[i] = { blockRow: Math.floor(b / blocksX), blockCol: b % blocksX, zigzagIdx: zi };
+    }
+    return out;
+  }
   const stream: CoeffPosition[] = [];
   // AC-major order: iterate by AC position first, then across all blocks.
   // This spreads embedding evenly across the entire image instead of
@@ -280,6 +338,10 @@ function buildCoeffStream(blocksY: number, blocksX: number, acCount: number = AC
   }
   return stream;
 }
+
+/** Test seam: the slot mapping is pure, and asserting on it directly beats
+ *  inferring it from pixels. */
+export const buildCoeffStreamForTest = buildCoeffStream;
 
 /**
  * Convert a zigzag index (into AC_INDICES) to a (row, col) in the 8x8 block.
@@ -486,6 +548,7 @@ export async function embedQim(
   const chromaChannels = options?.chromaChannels ?? [];
   const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
   const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
+  const slotOrder: SlotOrder = options?.slotOrder ?? "ac-major";
 
   // Step 1: Decode JPEG to pixel data
   const { data: pixels, width, height } = await decodeJpegToPixels(imageData);
@@ -521,7 +584,7 @@ export async function embedQim(
   // Work on luminance only (Y channel), applied back to all RGB channels proportionally
   const blocksY = Math.floor(height / 8);
   const blocksX = Math.floor(width / 8);
-  const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount);
+  const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount, slotOrder);
 
   // Chroma slots are filled before any luma slot (see stego-color.ts and
   // §10.4 in HANDOFF.md): chroma perturbation is far less visible than luma,
@@ -560,6 +623,21 @@ export async function embedQim(
     modifiedBlocks.add(key);
   }
 
+  // Inverse of buildCoeffStream: (zigzag, block) -> position in the bit
+  // stream. Embedding walks blocks (so each block's DCT is computed once)
+  // while the bit order is defined by the stream, so one side has to be
+  // inverted. This used to be an inline formula that hardcoded AC-major
+  // ordering -- which silently ignored the stream whenever the ordering was
+  // anything else, writing bits to the wrong slots while the detector, which
+  // does iterate the stream, read the right ones. Derive it from the stream so
+  // the two cannot disagree again.
+  const blocksPerPlane = blocksY * blocksX;
+  const slotOfBlockCoeff = new Int32Array(blocksPerPlane * lumaAcCount).fill(-1);
+  for (let i = 0; i < stream.length; i++) {
+    const p = stream[i];
+    slotOfBlockCoeff[p.zigzagIdx * blocksPerPlane + p.blockRow * blocksX + p.blockCol] = i;
+  }
+
   // Extract Y channel once from the original decoded pixels
   const yChannel = extractYChannel(pixels, width, height);
 
@@ -583,11 +661,9 @@ export async function embedQim(
 
     // Apply QIM to the AC positions that need embedding for this block
     let modified = false;
-    const blocksPerPlane = blocksY * blocksX;
     for (let zi = 0; zi < lumaAcCount; zi++) {
-      // AC-major ordering: stream index = zi * (blocksY * blocksX) + br * blocksX + bc
-      const streamIdx = zi * blocksPerPlane + br * blocksX + bc;
-      if (streamIdx >= lumaBits.length) continue;
+      const streamIdx = slotOfBlockCoeff[zi * blocksPerPlane + br * blocksX + bc];
+      if (streamIdx < 0 || streamIdx >= lumaBits.length) continue;
 
       const [dy, dx] = zigzagIndexTo2d(zi);
       const coeffIdx = dy * 8 + dx;
@@ -715,6 +791,7 @@ export async function detectQim(
   const chromaChannels = options?.chromaChannels ?? [];
   const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
   const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
+  const slotOrder: SlotOrder = options?.slotOrder ?? "ac-major";
 
   try {
     // Step 1: Decode JPEG to pixel data
@@ -723,7 +800,7 @@ export async function detectQim(
     // Step 2+3: Extract QIM bits from all 8x8 blocks
     const blocksY = Math.floor(height / 8);
     const blocksX = Math.floor(width / 8);
-    const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount);
+    const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount, slotOrder);
 
     const qt = quantizationTable(quality);
     const yChannel = extractYChannel(pixels, width, height);
@@ -1031,7 +1108,11 @@ export async function encodeQimImageFile(
   const chromaChannels = options?.chromaChannels ?? prof?.chromaChannels;
   const rsNsym = options?.rsNsym ?? prof?.rsNsym;
   const lumaAcCount = options?.lumaAcCount ?? prof?.lumaAcCount;
-  const result = await embedQim(jpegBytes, payload, { ...options, delta, chromaDelta, chromaChannels, rsNsym, lumaAcCount });
+  const slotOrder = options?.slotOrder ?? prof?.slotOrder;
+  const repeat = options?.repeat ?? prof?.repeat;
+  const result = await embedQim(jpegBytes, payload, {
+    ...options, delta, chromaDelta, chromaChannels, rsNsym, lumaAcCount, slotOrder, repeat,
+  });
   return new Blob([result], { type: "image/jpeg" });
 }
 
@@ -1077,7 +1158,8 @@ export async function decodeQimImageFile(
       // Phase 3: plain luma-only sweep, full AC range, chroma disabled --
       // backward compatible with images made before this change and other
       // platforms.
-      const totalAttempts = chromaCandidates.length + zigzagCandidates.length + DETECT_DELTAS.length;
+      // zigzag candidates are tried under both slot orderings (see below).
+      const totalAttempts = chromaCandidates.length + zigzagCandidates.length * 2 + DETECT_DELTAS.length;
       let attemptNum = 0;
       const onProgress = options?.onProgress;
 
@@ -1092,11 +1174,25 @@ export async function decodeQimImageFile(
       }
       if (!result || result.length === 0) {
         for (const prof of zigzagCandidates) {
-          attemptNum++;
-          onProgress?.(`zigzag delta ${prof.delta}`, attemptNum, totalAttempts);
-          result = await detectQim(jpegBytes, {
-            ...options, delta: prof.delta, lumaAcCount: prof.lumaAcCount, rsNsym: prof.rsNsym,
-          });
+          // Both slot orderings, always -- not just the one the profile
+          // currently declares. A profile that switched to "spread" (§17.4)
+          // must still read the images it produced before the switch, and
+          // ordering is not recoverable from the file: a wrong order reads
+          // the right coefficients in the wrong sequence, so the magic and RS
+          // fail exactly as they do for a wrong delta. Two cheap attempts here
+          // are the difference between old images decoding and not.
+          const orders: SlotOrder[] = prof.slotOrder === "spread"
+            ? ["spread", "ac-major"]
+            : ["ac-major", "spread"];
+          for (const slotOrder of orders) {
+            attemptNum++;
+            onProgress?.(`zigzag delta ${prof.delta} (${slotOrder})`, attemptNum, totalAttempts);
+            result = await detectQim(jpegBytes, {
+              ...options, delta: prof.delta, lumaAcCount: prof.lumaAcCount, rsNsym: prof.rsNsym,
+              slotOrder, repeat: prof.repeat,
+            });
+            if (result && result.length > 0) break;
+          }
           if (result && result.length > 0) break;
         }
       }
@@ -1243,6 +1339,11 @@ export async function getQimCapacityForFile(
     chromaChannels: prof.chromaChannels,
     rsNsym: prof.rsNsym,
     lumaAcCount: prof.lumaAcCount,
+    // repeat must come from the profile too. §17.4 raised telegram_photo to
+    // 15; without this the quoted capacity stays at the repeat-5 figure and
+    // overstates it 3x, so the packer fills to a budget the encoder cannot
+    // actually carry and the self-test fails after the work is done.
+    repeat: prof.repeat,
   });
   return { capacityBytes, width: w, height: h };
 }

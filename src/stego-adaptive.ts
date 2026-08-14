@@ -88,6 +88,19 @@ export interface PlatformProfile {
    * survival. Untested against real Instagram sharpening as of writing.
    */
   lumaAcCount?: number;
+  /**
+   * Slot ordering (§17.4). "spread" scatters a partial payload across every AC
+   * position and the whole frame instead of saturating zigzag 1 from the top
+   * down; only worth it when the payload is small, which the pointer tier made
+   * the normal case. Omitted = "ac-major", the original behaviour.
+   */
+  slotOrder?: "ac-major" | "spread";
+  /**
+   * Bit repetition. Raising it is the one lever that buys robustness without
+   * costing visibility -- it spends capacity, which a small payload has in
+   * abundance. Omitted = the QIM default of 5.
+   */
+  repeat?: number;
 }
 
 /**
@@ -142,7 +155,14 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // never decodes. The sweep filter now also catches rsNsym on its own, but
   // keeping both set here matches universal and costs nothing.
   telegram_photo: {
+    // §17.4: at a 264 B pointer this profile used 12.1% of capacity but put
+    // 100% of the perturbation on zigzag 1 across 72.7% of blocks -- a
+    // coherent grating in the most visible frequency there is. "spread"
+    // scatters the same energy over all six positions and the whole frame;
+    // repeat 15 (up from 5) buys back the robustness that costs, and still
+    // uses only ~36% of capacity.
     width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    slotOrder: "spread", repeat: 15,
     note: "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled "
       + "and lost. Send as FILE instead if you need capacity; that path does not recompress.",
   },

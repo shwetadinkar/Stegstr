@@ -208,6 +208,38 @@ export class RelayPool {
     this.timers.set(url, t);
   }
 
+  /**
+   * Open sockets to these relays and wait until at least one is usable.
+   *
+   * `publish` sends synchronously and reports "not connected" for any socket
+   * that is not OPEN yet. For subscriptions that is harmless -- `onopen`
+   * re-arms every sub -- and for `publishEvent` the Outbox retries until
+   * something sticks. But a caller that wants a real answer *now* would
+   * otherwise get a unanimous, and entirely false, "no relay would take it"
+   * on a cold pool, purely because the handshakes had not finished.
+   *
+   * Resolves as soon as one relay is open, or on timeout. Timing out is not an
+   * error here: publish will then report per-relay outcomes, which is more
+   * informative than anything this could throw.
+   */
+  async ensureConnected(urls: string[], timeoutMs = 6000): Promise<string[]> {
+    for (const url of urls) this.ensure(url);
+    const open = () => urls.filter((u) => this.sockets.get(u)?.readyState === OPEN);
+    // Deliberately counts its own polls rather than consulting `this.now()`.
+    // That clock is injectable and callers freeze it in tests, and a wait loop
+    // that sleeps on real timers while asking a frozen clock whether time has
+    // passed never terminates. Bounding by iterations makes the timeout hold
+    // whatever the clock is doing.
+    const step = 100;
+    const polls = Math.max(1, Math.ceil(timeoutMs / step));
+    for (let i = 0; i < polls; i++) {
+      const ready = open();
+      if (ready.length > 0) return ready;
+      await new Promise((r) => setTimeout(r, step));
+    }
+    return open();
+  }
+
   private rawSend(url: string, payload: string): boolean {
     const ws = this.sockets.get(url);
     if (!ws || ws.readyState !== OPEN) return false;
