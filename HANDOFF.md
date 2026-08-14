@@ -2454,3 +2454,45 @@ hours, not a deadline-week item.
 **Cheapest test before any of it:** re-upload a failing sent file unchanged. If
 it passes on retry, Instagram is simply non-deterministic and no encoding work
 would have helped.
+
+### 17.13 Instagram has two processing modes, and retry works
+
+The re-upload test from §17.11 was run: the *sent* files that Instagram
+destroyed at 20:15 were uploaded again unchanged at 21:26. **Both survived.**
+Identified by pointer event id, so there is no ambiguity about which file is
+which.
+
+Five Instagram round trips of the same cover, same profile, delta 56:
+
+| sent | returned | PSNR | carrier p99.9 | % of delta/2 margin | result |
+|---|---|---|---|---|---|
+| 18:48 | 19:05 | 41.0 dB | 13.86 | 49.5% | PASS |
+| 19:48 ac-major | 20:15 | 32.0 dB | 149.95 | 535% | FAIL |
+| 19:48 spread | 20:16 | 31.9 dB | 115.90 | 414% | FAIL |
+| 19:48 ac-major (same file) | 21:26 | 41.0 dB | 13.42 | 47.9% | PASS |
+| 19:48 spread (same file) | 21:26 | 40.7 dB | 13.74 | 49.1% | PASS |
+
+**Light mode clusters at 40.7-41.0 dB; heavy mode at 31.9-32.0 dB. Nothing in
+between.** Two server-side pipelines. Which one an upload gets is not a
+property of the file -- byte-identical uploads went through both.
+
+Three conclusions:
+
+- **Instagram is non-deterministic and retry works.** The honest claim is
+  "survives Instagram, 3 of 5 attempts in testing; retry on failure", not
+  "unsupported". §17.11's lean toward documenting it as broken was wrong, and
+  the user's instinct that a third attempt would pass was right.
+- **Even light mode is marginal.** 47.9%, 49.1%, 49.5% of the decision margin
+  -- half the budget gone on a *good* day, with nothing left for a bad one.
+  That is why heavy mode is not a near miss but total destruction.
+- **`spread` buys no robustness.** Light mode 47.9% vs 49.1% is a wash; heavy
+  mode destroys both. Any case for spread is visual only.
+
+**Method note.** Three files arrived as `.jfif`, so a `*.jpg -o *.jpeg` search
+missed them entirely and reported "nothing new". Instagram and browsers hand
+back that extension routinely -- search by content or use a wider glob.
+
+**Still unknown: what triggers heavy mode.** Not the file. Not the ordering.
+Candidates never isolated: single vs multi-image post, time of day, server-side
+A/B, account state. Worth one controlled hour if Instagram matters; the
+practical mitigation (retry) already works without knowing.
