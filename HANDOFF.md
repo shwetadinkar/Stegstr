@@ -2685,3 +2685,90 @@ release workflow, and costs no additional exposure for the same reason.
 **Note on the PAT:** pushing `.github/workflows/**` to a *new* repository needs
 the token's `workflow` scope. Updating existing workflow files does not, which
 is why this only surfaced on the first push to the private repo.
+
+---
+
+## 19. Agent operability: MCP server (contest requirement #1)
+
+The brief lists **AI Agent Operability first** among what it wants built. This
+fork previously added nothing there, which made it the one named requirement
+where every entrant started level and a few days could create real distance.
+
+**225 tests**, `tsc` and `npm run build` clean.
+
+### 19.1 The gap was worse than "we have not built one"
+
+The agent surface that shipped **exposed the transport that does not survive
+platforms**:
+
+- The Rust lib is `stego`, `stego_crypto`, `stego_dot` -- the legacy PNG
+  dot-matrix method. QIM exists in Rust only as a shim that shells out to
+  `qim_cli.py`.
+- `stegstr-cli` therefore cannot produce a QIM image at all.
+- `skill/stegstr/SKILL.md` documented that method throughout and stated
+  outright: *"PNG only (lossless). JPEG or other lossy formats will corrupt the
+  hidden data."*
+
+Every chat app converts uploads to JPEG. So by its own description the
+documented agent workflow could not survive any platform -- the exact failure
+this project exists to fix, reachable through the one interface nobody was
+exercising by hand.
+
+### 19.2 What was built
+
+`src/mcp-server.ts`, stdio transport, five tools:
+
+| Tool | Purpose |
+|---|---|
+| `stegstr_platforms` | Targets and measured geometry, with why each matters |
+| `stegstr_inspect_cover` | Detail score and verdict before an attempt is wasted |
+| `stegstr_capacity` | Bytes available for a cover and target |
+| `stegstr_embed` | Hide a message, verified by read-back before writing |
+| `stegstr_detect` | Recover content, with the likely cause when there is none |
+
+**It calls the shipped TypeScript encoder directly** -- the same code path the
+UI uses and the one every platform measurement was made against. No second
+implementation to drift out of step. That is possible only because the canvas
+polyfill written for CI already runs the browser encoder headless, which is why
+it moved from `src/__tests__/canvas-polyfill.ts` to `src/node-canvas.ts`: a
+runtime component must not import from the test tree.
+
+Three deliberate choices:
+
+- **Embed decodes the image back before writing.** A cover that cannot carry
+  the message reports failure rather than producing an image that silently
+  loses it -- the worst outcome available, since every other indicator reads
+  success.
+- **`inspect_cover` exists** because detail is what hides the payload and is not
+  a property anyone would guess. Measured covers ran ~9 (smooth interior) to
+  ~45 (dense foliage); the foliage ones passed Instagram first time.
+- **Errors explain the usual cause.** "No hidden content" also says the image
+  may have been resized, screenshotted or re-saved.
+
+Five integration tests drive the real process over stdio rather than calling
+handlers, because the interesting failures live in bundling, the transport, and
+whether the polyfill installs before the encoder loads.
+
+### 19.3 A silent failure found while building it
+
+**`coverGeometry` only downscales.** The resize is gated on `w > targetWidth`,
+so a photo narrower than the target keeps its own size. Aim a 1024px photo at
+`telegram_photo` and it ships at 1024; Telegram re-encodes every photo to
+1280x960, and resampling moves the 8x8 grid the payload lives in (§3.1).
+
+**Nothing could catch this.** `qimSelfTest` verifies the file as written, not as
+the platform hands it back, so it passes. The UI and the MCP server now both
+warn when output geometry does not match the target. Five tests in
+`cover-geometry.test.ts` pin the rules -- including that square platforms
+(Instagram) *do* enlarge, while width-targeted ones do not.
+
+### 19.4 Two traps for whoever works here next
+
+- **`tsconfig.json` excludes `src/__tests__`.** Nothing in the test tree is
+  type-checked. Moving the polyfill into `src/` surfaced two real errors that
+  had been sitting there, including `ReturnType<typeof createCanvas>` resolving
+  to `SvgCanvas` because TypeScript picks the *last* overload.
+- **Do not pipeline dependent MCP calls in tests.** The server handles requests
+  concurrently, so sending embed and detect together races the filesystem and
+  fails for reasons unrelated to the code. Real clients await each reply; the
+  test helper now does too.
