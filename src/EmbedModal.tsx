@@ -78,8 +78,13 @@ export interface EmbedModalProps {
   onPointerModeChange: (on: boolean) => void;
   slotOrder: "profile" | "ac-major" | "spread";
   onSlotOrderChange: (order: "profile" | "ac-major" | "spread") => void;
-  /** The user's own recent notes, newest first, offered for explicit selection. */
-  selectableNotes: { id: string; content: string; created_at: number }[];
+  /**
+   * Recent notes offered for explicit selection, newest first: the user's own
+   * and those of people they follow, which is exactly what automatic packing
+   * would carry. It was restricted to the user's own notes, so the control
+   * appeared broken to anyone who had not posted yet.
+   */
+  selectableNotes: { id: string; content: string; created_at: number; mine: boolean }[];
   /** null = carry the whole feed by priority; a list = carry exactly these. */
   selectedNoteIds: string[] | null;
   onSelectedNoteIdsChange: (ids: string[] | null) => void;
@@ -247,10 +252,12 @@ export function EmbedModal({
             {" "}Pick specific notes
           </label>
           {/* A disabled radio with no reason next to it just looks broken.
-              Say why it is unavailable. */}
+              Say why it is unavailable -- and say it accurately: the list holds
+              your notes and those of people you follow, so "you have not
+              written any notes yet" was wrong as well as unhelpful. */}
           {selectableNotes.length === 0 && (
             <span className="muted" style={{ fontSize: "0.78rem", marginLeft: "0.4rem" }}>
-              — you have not written any notes yet
+              — nothing to pick yet: post a note, or follow someone
             </span>
           )}
 
@@ -293,7 +300,15 @@ export function EmbedModal({
                               )
                             }
                           />
-                          <span>{n.content.replace(/\s+/g, " ").slice(0, 90) || "(no text)"}</span>
+                          <span>
+                            {/* The list mixes your notes with those of people
+                                you follow, so it has to say which is which --
+                                you are about to put one in an image and send
+                                it, and "whose words are these" is not a detail
+                                to leave the user inferring. */}
+                            {!n.mine && <span className="embed-note-who">theirs</span>}
+                            {n.content.replace(/\s+/g, " ").slice(0, 90) || "(no text)"}
+                          </span>
                         </label>
                       );
                     })}

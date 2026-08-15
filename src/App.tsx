@@ -17,6 +17,12 @@ import {
   getQimCapacityForFile,
 } from "./stego-qim";
 import { uploadEncrypted, attachmentToToken, type UploadedAttachment } from "./blossom";
+import {
+  embedCandidates as eligibleToCarry,
+  selectableNotes,
+  profilesToCarry,
+  type CandidateContext,
+} from "./embed-candidates";
 import { ensureStegstrSuffix } from "./constants";
 import * as stegoCrypto from "./stego-crypto";
 import * as logger from "./logger";
@@ -611,6 +617,13 @@ function App({ profile }: { profile: string | null }) {
   const deletedNoteIds = new Set(
     events.filter((e) => e.kind === 5 && selfPubkeys.includes(e.pubkey)).flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1]))
   );
+  // What an image may carry. Shared by automatic packing and the note picker,
+  // which used to disagree -- see embed-candidates.ts.
+  const candidateCtx: CandidateContext = {
+    ourPubkeys: ourPubkeysSet,
+    contacts: contactsSet,
+    deletedNoteIds,
+  };
   const rootNotes = notes
     .filter((n) => {
       const eTag = n.tags.find((t) => t[0] === "e");
@@ -1631,54 +1644,47 @@ function App({ profile }: { profile: string | null }) {
           } catch (_) {}
         }
         const buildBundle = async (eventList: NostrEvent[]) => {
-          const pubkeysInEmbed = new Set(
-            eventList.flatMap((e) => [e.pubkey, ...e.tags.filter((t) => t[0] === "p").map((t) => t[1])])
+          // Who needs a profile, and whether we can sign one or must carry
+          // theirs as-is. See profilesToCarry for the gap this closes.
+          const ownPubkeys = new Set(
+            identities.map((i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex))),
           );
-          const kind0InEvents = new Set(eventList.filter((e) => e.kind === 0).map((e) => e.pubkey));
+          const { synthesise, borrow } = profilesToCarry(eventList, events, ownPubkeys);
+
           const synthetic: NostrEvent[] = [];
-          for (const pk of pubkeysInEmbed) {
-            if (!pk || kind0InEvents.has(pk)) continue;
-            const idForPk = identities.find((i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex)) === pk);
-            if (!idForPk) continue;
-            const prof = profiles[pk];
-            if (!prof) continue;
+          for (const pk of synthesise) {
+            const idForPk = identities.find(
+              (i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex)) === pk,
+            );
+            const prof = idForPk && profiles[pk];
+            if (!idForPk || !prof) continue;
             try {
-              const content = JSON.stringify(prof);
               const ev = await Nostr.finishEventAsync(
-                { kind: 0, content, tags: [], created_at: Math.floor(Date.now() / 1000) },
-                Nostr.hexToBytes(idForPk.privKeyHex)
+                {
+                  kind: 0,
+                  content: JSON.stringify(prof),
+                  tags: [],
+                  created_at: Math.floor(Date.now() / 1000),
+                },
+                Nostr.hexToBytes(idForPk.privKeyHex),
               );
               synthetic.push(ev as NostrEvent);
             } catch (_) {}
           }
-          return { version: STEGSTR_BUNDLE_VERSION, events: [...synthetic, ...eventList] } as NostrStateBundle;
+          return {
+            version: STEGSTR_BUNDLE_VERSION,
+            events: [...synthetic, ...borrow, ...eventList],
+          } as NostrStateBundle;
         };
-        // Restrict the embed candidate pool to your own identities and
-        // followed accounts. `events` is the same state the Global feed tab
-        // reads from, which -- correctly, for display -- now includes every
-        // author encountered on the network (§12 Global feed fix). Without
-        // this filter, "embed my feed" silently became "embed a slice of
-        // the entire Global feed": strangers' profile events are small and
-        // score highly in packForCapacity's density ranking, so at any
-        // capacity tight enough to matter they crowded out actual note text
-        // from people you follow, or yourself.
-        const embedCandidatesAll = events.filter(
-          (e) => (ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey))
-            // Deletions are relay-propagated state, not content. A kind-5
-            // tombstone is ~380 bytes of pure overhead with no content, so
-            // packForCapacity scores it at roughly 2.3x the density of a real
-            // note and sorts it to the FRONT of the selection; the
-            // orphan-reply rule then drags the deleted note in alongside it,
-            // because a tombstone's ["e", id] tag looks like a reply. Net
-            // effect on a tight cover: the image preferentially carries a note
-            // you deleted plus the tombstone that deleted it, crowding out the
-            // note actually in your feed. Accepting it can also re-apply the
-            // deletion on the far side.
-            && e.kind !== 5
-            && !deletedNoteIds.has(e.id));
+        // One eligibility rule, shared with the "Pick specific notes" list --
+        // see embed-candidates.ts for why it lives there and what the two
+        // divergent copies used to do.
+        const embedCandidatesAll = eligibleToCarry(events, candidateCtx);
         // An explicit selection overrides priority packing entirely. Profiles
-        // are still added by buildBundle, so the recipient can still identify
-        // the sender -- what is dropped is everything the user did not ask for.
+        // are still added by buildBundle -- including a followed author's own
+        // kind-0, which it now carries rather than dropping -- so the recipient
+        // can still tell whose words these are. What is dropped is everything
+        // the user did not ask for.
         const embedCandidates = embedNoteIds
           ? embedCandidatesAll.filter((e) => embedNoteIds.includes(e.id))
           : embedCandidatesAll;
@@ -3342,11 +3348,7 @@ function App({ profile }: { profile: string | null }) {
           }}
           slotOrder={embedSlotOrder}
           onSlotOrderChange={setEmbedSlotOrder}
-          selectableNotes={events
-            .filter((e) => e.kind === 1 && ourPubkeysSet.has(e.pubkey) && !deletedNoteIds.has(e.id))
-            .sort((a, b) => b.created_at - a.created_at)
-            .slice(0, 50)
-            .map((e) => ({ id: e.id, content: e.content, created_at: e.created_at }))}
+          selectableNotes={selectableNotes(events, candidateCtx)}
           selectedNoteIds={embedNoteIds}
           onSelectedNoteIdsChange={setEmbedNoteIds}
         />

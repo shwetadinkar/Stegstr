@@ -1054,6 +1054,19 @@ textarea { resize: vertical; min-height: 60px; }
 .embed-note-pick:hover { background: #f0f0f0; }
 .embed-note-pick input { margin-top: 0.15rem; flex-shrink: 0; }
 .embed-note-pick span { overflow-wrap: anywhere; }
+/* Marks a followed author's note in a list that also holds your own. */
+.embed-note-who {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: #e4e4e7;
+  color: #52525b;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: 1px;
+}
 
 /* ---------------------------------------------------------------------------
    Dark mode for the elements added after the main dark block.
