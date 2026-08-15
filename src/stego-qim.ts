@@ -31,6 +31,7 @@ import { RSCodec } from "./reed-solomon";
 import {
   PLATFORM_PROFILES, DETECT_DELTAS, profileFor,
   blockActivity, deltaForBlock, LADDER_MEAN,
+  CARRIER_COEFF_ZIGZAG, isCarrierBlock,
 } from "./stego-adaptive";
 import {
   ycbcrToRgb, extractChromaPlanes,
@@ -45,6 +46,20 @@ import {
 const ACTIVITY_COEFF_INDICES: number[] = (() => {
   const out: number[] = [];
   for (let z = 25; z <= 40; z++) {
+    const [dy, dx] = ZIGZAG_2D[z];
+    out.push(dy * 8 + dx);
+  }
+  return out;
+})();
+
+/**
+ * Coefficients that decide whether a block carries data at all (§17.14).
+ * Zigzag 7-24: above every position the encoder writes (profiles use 1-6), so
+ * embedding cannot move the number the decoder has to reproduce.
+ */
+const CARRIER_COEFF_INDICES: number[] = (() => {
+  const out: number[] = [];
+  for (let z = CARRIER_COEFF_ZIGZAG[0]; z <= CARRIER_COEFF_ZIGZAG[1]; z++) {
     const [dy, dx] = ZIGZAG_2D[z];
     out.push(dy * 8 + dx);
   }
@@ -113,6 +128,12 @@ export interface QimOptions {
    * sweep tries both, so images made before this option still decode.
    */
   slotOrder?: SlotOrder;
+  /**
+   * Skip blocks whose texture score falls below this, so the flattest regions
+   * carry nothing (§17.14). Must match between embed and decode. Undefined =
+   * every block carries data, the original behaviour.
+   */
+  textureFloor?: number;
   /** Whether to compress payload with deflate before embedding. Default true. */
   compress?: boolean;
   /**
@@ -549,6 +570,7 @@ export async function embedQim(
   const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
   const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
   const slotOrder: SlotOrder = options?.slotOrder ?? "ac-major";
+  const textureFloor = options?.textureFloor;
 
   // Step 1: Decode JPEG to pixel data
   const { data: pixels, width, height } = await decodeJpegToPixels(imageData);
@@ -658,6 +680,20 @@ export async function embedQim(
     const blockDelta = adaptive
       ? deltaForBlock(delta, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
       : delta;
+
+    // §17.14: a block with no texture carries nothing. It is where the
+    // artifact is most visible (nothing to mask it) and where the payload is
+    // least likely to survive, so skipping it removes the loudest part of the
+    // perturbation for a few percent of the slots.
+    //
+    // Skipped slots are simply not written -- the coefficient keeps its natural
+    // value. The decoder recomputes this from the damaged image and marks those
+    // reads as zero-confidence, so a disagreement costs one copy of one bit
+    // rather than shifting the stream (§15.4's failure mode).
+    if (textureFloor !== undefined
+        && !isCarrierBlock(blockActivity(qCoeffs, CARRIER_COEFF_INDICES), textureFloor)) {
+      continue;
+    }
 
     // Apply QIM to the AC positions that need embedding for this block
     let modified = false;
@@ -792,6 +828,7 @@ export async function detectQim(
   const chromaEnabled = chromaDelta !== undefined && chromaChannels.length > 0;
   const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
   const slotOrder: SlotOrder = options?.slotOrder ?? "ac-major";
+  const textureFloor = options?.textureFloor;
 
   try {
     // Step 1: Decode JPEG to pixel data
@@ -870,7 +907,14 @@ export async function detectQim(
       const c = qCoeffs[coeffIdx];
       const [bit, margin] = qimDetectWithMargin(c, blockDelta);
       rawBits.push(bit);
-      margins.push(margin);
+      // A block the encoder skipped holds no bit, so whatever we read from it
+      // is noise. Reporting zero confidence lets the existing erasure path
+      // handle it: majority voting still resolves a bit whose other copies
+      // landed in carrier blocks, and a byte with no confident copies becomes
+      // an RS erasure -- which costs half what an uncorrected error does.
+      const carries = textureFloor === undefined
+        || isCarrierBlock(blockActivity(qCoeffs, CARRIER_COEFF_INDICES), textureFloor);
+      margins.push(carries ? margin : 0);
       bitDelta.push(blockDelta);
     }
 

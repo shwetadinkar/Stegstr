@@ -2772,3 +2772,75 @@ warn when output geometry does not match the target. Five tests in
   concurrently, so sending embed and detect together races the filesystem and
   fails for reasons unrelated to the code. Real clients await each reply; the
   test helper now does too.
+
+### 19.5 §17.14 texture selection: built, does not work, and exactly why
+
+Attempted and **not shipped**. The flag exists (`textureFloor`, off in every
+profile, pinned by a test), the mechanism is in place, and a payload does not
+round-trip. Recording the diagnosis in full because it is specific and fixable,
+and because the next attempt should start from the answer.
+
+**What works.** The texture measure is sound. Zigzag 7-24 sits above the
+embedding band, and on a real 1600x1200 photo it separates blocks properly
+where the existing measure cannot:
+
+```
+zz 25-40 (the current ladder's band)   77% zero    p50  0.0   p90   3.0
+zz 7-24  (this)                        25% zero    p50  4.0   p90  34.0
+spatial variance                        0% zero    p50  5.3   p90  33.5
+```
+
+Encoder/decoder agreement is **perfect** -- 0 disagreements out of 16,800
+blocks at every floor tested, because quantized values above the write band are
+untouched by embedding and stable through a re-encode. §15.4's fear of blocks
+flipping sides did not materialise at this band.
+
+**Why it still fails.** Two independent problems, and the second is fatal.
+
+*One: the carrier fraction is too low, and it is not tunable.* The score
+distribution is bimodal -- 25% of blocks score exactly zero, the rest score 6 or
+more -- so every floor from 1 to 6 selects the same **75%**. With repeat-5
+majority voting a bit needs 3 of its 5 copies in carrier blocks:
+
+```
+select 40% of blocks -> a bit recovers 31.7% of the time
+select 75% of blocks -> 89.6%      <- what the data actually gives
+select 85% of blocks -> 97.3%
+select 90% of blocks -> 99.1%
+```
+
+At 75%, roughly one bit in ten is lost. No error correction survives that.
+
+*Two: the length header lands in the skipped blocks.* The 2-byte codeword-length
+prefix is **unprotected** and occupies the first slots of the stream. Under
+AC-major ordering those are the first blocks in raster order -- the top of the
+image, which on most photos is sky or ceiling. Measured on the test cover, **75
+of the first 80 blocks score zero**, and the first 16 score zero outright. The
+header is written into blocks the encoder skips, so decode reads a garbage
+length and gives up before Reed-Solomon runs.
+
+That is why redundancy cannot rescue it, which was checked rather than assumed:
+
+```
+rsNsym 32  repeat 5   FAIL
+rsNsym 128 repeat 5   FAIL
+rsNsym 128 repeat 9   FAIL
+rsNsym 200 repeat 15  FAIL
+```
+
+The failure is upstream of error correction entirely.
+
+**What a fix needs.** The header must not depend on block selection -- give it
+its own compact addressing over carrier blocks only, replicate it across widely
+spaced slots, or remove the length prefix and derive the length from the RS
+structure. Then the 75% fraction still has to be addressed: either raise the
+carrier fraction (a floor that excludes only the very flattest, which this
+bimodal distribution does not offer), or use compact addressing for the payload
+too and accept the desync risk §15.4 identified -- though note this band showed
+zero disagreement in CI, so that risk may be smaller than assumed. It has not
+been tested against a real channel.
+
+**Cost of leaving it in:** none. `textureFloor` is undefined everywhere, a test
+asserts no profile sets it, and the encode path is unchanged when it is unset.
+The failing round trip is pinned by a test that asserts the failure, so whoever
+fixes the header sees it flip to passing.

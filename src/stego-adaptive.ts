@@ -96,6 +96,16 @@ export interface PlatformProfile {
    */
   slotOrder?: "ac-major" | "spread";
   /**
+   * Skip blocks whose texture score (zigzag 7-24, see CARRIER_COEFF_ZIGZAG)
+   * falls below this, so the flattest regions carry nothing (§17.14).
+   *
+   * Only valid with `lumaAcCount` at or below 6: the measurement band must sit
+   * above every position the encoder writes, or embedding moves the number the
+   * decoder needs to reproduce. Omitted = every block carries data, the
+   * original behaviour.
+   */
+  textureFloor?: number;
+  /**
    * Bit repetition. Raising it is the one lever that buys robustness without
    * costing visibility -- it spends capacity, which a small payload has in
    * abundance. Omitted = the QIM default of 5.
@@ -429,6 +439,48 @@ export function blockActivity(
   let sum = 0;
   for (const idx of coeffIndices) sum += Math.abs(qCoeffs[idx]);
   return sum;
+}
+
+/**
+ * Coefficients used to decide whether a block can carry data at all (§17.14).
+ *
+ * Zigzag 7-24: ABOVE the embedding band (profiles write zigzag 1-6), so
+ * embedding cannot move the measurement the decoder has to reproduce, and
+ * below the noise floor where quantization erases everything.
+ *
+ * The existing texture measure reads zigzag 25-40 and is useless for this:
+ * measured on a real 1600x1200 photo it is **zero for 77% of blocks**
+ * (§15.3), so it cannot tell a flat wall from foliage. This band on the same
+ * photo: 25% zero, median 4, p90 34.
+ */
+export const CARRIER_COEFF_ZIGZAG: readonly [number, number] = [7, 24];
+
+/**
+ * Is this block worth embedding into?
+ *
+ * The point is NOT to concentrate the payload in the most textured blocks.
+ * With repeat-5 majority voting a bit needs 3 of its 5 copies to land in
+ * carrier blocks, so selecting a small fraction destroys the stream outright:
+ *
+ *     select 40% of blocks -> a bit recovers 31.7% of the time
+ *     select 85% of blocks -> 97.3%
+ *     select 90% of blocks -> 99.1%
+ *
+ * So this excludes only the flattest blocks -- which is where the win is
+ * anyway. A flat block has no texture to mask the perturbation, so the
+ * artifact is most visible exactly there, and it is also where the payload is
+ * least likely to survive (§10.6: a logo cover fails outright). Skipping them
+ * removes the loudest part of the artifact and costs a few percent of slots.
+ *
+ * Encoder and decoder must agree, and the decoder recomputes this from a
+ * channel-damaged image. Disagreement is not catastrophic here: a bit simply
+ * loses one of its five copies, and a byte with no surviving copies becomes an
+ * RS erasure, which costs half what an error does. That is the whole reason
+ * this is viable now when §15.4 rejected it -- there, a disagreement shifted
+ * every subsequent bit.
+ */
+export function isCarrierBlock(activity: number, floor: number): boolean {
+  return activity >= floor;
 }
 
 export function activityRung(activity: number): number {
