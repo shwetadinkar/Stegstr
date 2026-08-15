@@ -1054,6 +1054,24 @@ textarea { resize: vertical; min-height: 60px; }
 .embed-note-pick:hover { background: #f0f0f0; }
 .embed-note-pick input { margin-top: 0.15rem; flex-shrink: 0; }
 .embed-note-pick span { overflow-wrap: anywhere; }
+
+/* Attach failures, next to the button that caused them. */
+.attach-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #f0b4b4;
+  border-left: 3px solid #d93838;
+  border-radius: 4px;
+  background: #fdf3f3;
+  color: #8a2020;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.attach-error span { flex: 1; overflow-wrap: anywhere; }
+.attach-error .btn-remove { color: #8a2020; flex-shrink: 0; }
 /* Marks a followed author's note in a list that also holds your own. */
 .embed-note-who {
   display: inline-block;

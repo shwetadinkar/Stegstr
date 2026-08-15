@@ -277,6 +277,17 @@ function App({ profile }: { profile: string | null }) {
   const [postAttachments, setPostAttachments] = useState<UploadedAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [status, setStatus] = useState<string>("");
+  /**
+   * Why attaching failed, shown next to the Attach button.
+   *
+   * setStatus renders inside the Steganography aside, next to the embed and
+   * detect controls. Attaching happens in the compose box at the top of the
+   * main column, so every refusal and every upload error was written to a
+   * panel the user was not looking at -- and clicking Attach, choosing a file
+   * and seeing nothing at all is indistinguishable from a dead button. That is
+   * how it was reported.
+   */
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [decodeError, setDecodeError] = useState<string>("");
   const [relayStatus, setRelayStatus] = useState<string>("");
   const [view, setView] = useState<View>("feed");
@@ -2372,6 +2383,31 @@ function App({ profile }: { profile: string | null }) {
     [effectivePrivKey, networkEnabled, canPublishToNetwork]
   );
 
+  /**
+   * Hide everything from an account, from this client only.
+   *
+   * The muted-pubkeys list and its unmute UI in Settings already existed. The
+   * only way to add to it was to paste a pubkey into Settings by hand, so a
+   * feed filled by one account looked like something with no remedy at all --
+   * Delete renders only on your own notes, and correctly so.
+   *
+   * Nothing is published and the author is not told. The toast offers the
+   * action straight back, because muting the wrong person on a mis-click is
+   * otherwise only undoable in a settings screen they would have to go and
+   * find.
+   */
+  const handleMuteAuthor = useCallback(
+    (note: NostrEvent) => {
+      if (selfPubkeys.includes(note.pubkey)) return;
+      const pk = note.pubkey;
+      setMutedPubkeys((prev) => new Set(prev).add(pk));
+      const name = profiles[pk]?.name ?? `${pk.slice(0, 8)}…`;
+      toast.info(`Muted ${name}. Their notes are hidden on this device only — nothing was published.`);
+      setStatus(`Muted ${name}. Undo in Settings › Muted users.`);
+    },
+    [selfPubkeys, profiles, toast],
+  );
+
   const handleDelete = useCallback(
     async (note: NostrEvent) => {
       if (!selfPubkeys.includes(note.pubkey)) return;
@@ -2605,19 +2641,25 @@ function App({ profile }: { profile: string | null }) {
     // switch entirely, which is the same failure as the pointer-resolution
     // leak.
     if (!networkEnabled) {
-      setStatus(
+      const msg =
         "Attaching uploads the file to a Blossom server, so it needs the network — " +
         "and Network is off. The file is encrypted first; the server only ever holds " +
-        "ciphertext.",
-      );
+        "ciphertext.";
+      setStatus(msg);
+      setAttachError(msg);
+      toast.error(msg);
       return;
     }
     if (!effectivePrivKey) {
-      setStatus("Attaching needs an identity to sign the upload. Log in first.");
+      const msg = "Attaching needs an identity to sign the upload. Log in first.";
+      setStatus(msg);
+      setAttachError(msg);
+      toast.error(msg);
       return;
     }
 
     setUploadingMedia(true);
+    setAttachError(null);
     try {
       const added: UploadedAttachment[] = [];
       for (let i = 0; i < files.length; i++) {
@@ -2627,16 +2669,22 @@ function App({ profile }: { profile: string | null }) {
       }
       setPostAttachments((prev) => [...prev, ...added]);
       const bytes = added.reduce((n, a) => n + a.size, 0);
-      setStatus(
+      const ok =
         `Attached ${added.length} file(s), ${(bytes / 1024).toFixed(0)} KB, encrypted. ` +
-        `The server holds ciphertext; only someone with your image can read them.`,
-      );
+        `The server holds ciphertext; only someone with your image can read them.`;
+      setStatus(ok);
+      toast.success(ok);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(msg);
+      // Kept until dismissed: an upload failure names which servers refused
+      // and why, which is the one thing worth reading here.
+      setAttachError(msg);
+      toast.error(msg);
     } finally {
       setUploadingMedia(false);
     }
-  }, [networkEnabled, effectivePrivKey]);
+  }, [networkEnabled, effectivePrivKey, toast]);
 
   const handleFollow = useCallback(
     async (theirPk: string) => {
@@ -2762,7 +2810,8 @@ function App({ profile }: { profile: string | null }) {
     onBookmark: handleBookmark,
     onUnbookmark: handleUnbookmark,
     onDelete: handleDelete,
-  }), [navigateToProfile, handleLike, handleRepost, handleZap, handleBookmark, handleUnbookmark, handleDelete]);
+    onMuteAuthor: handleMuteAuthor,
+  }), [navigateToProfile, handleLike, handleRepost, handleZap, handleBookmark, handleUnbookmark, handleDelete, handleMuteAuthor]);
 
   /** Actions for views that redirect reply to the feed. */
   const noteCardActionsRedirectReply: NoteCardActions = useMemo(() => ({
@@ -2923,6 +2972,8 @@ function App({ profile }: { profile: string | null }) {
               postAttachments={postAttachments}
               setPostAttachments={setPostAttachments}
               uploadingMedia={uploadingMedia}
+              attachError={attachError}
+              onDismissAttachError={() => setAttachError(null)}
               postMediaInputRef={postMediaInputRef}
               handlePostMediaUpload={handlePostMediaUpload}
               handlePost={handlePost}

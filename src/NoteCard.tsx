@@ -14,6 +14,15 @@ export interface NoteCardActions {
   onBookmark?: (ev: NostrEvent) => void;
   onUnbookmark?: (ev: NostrEvent) => void;
   onDelete?: (ev: NostrEvent) => void;
+  /**
+   * Hide everything from this author.
+   *
+   * Distinct from onDelete, which is offered only on your own notes and
+   * publishes a kind-5 tombstone. Muting publishes nothing, tells the author
+   * nothing, and hides their notes from this client only -- it feeds the same
+   * muted-pubkeys list that Settings already exposes for unmuting.
+   */
+  onMuteAuthor?: (ev: NostrEvent) => void;
 }
 
 /** Read-only helpers for rendering state. */
@@ -266,6 +275,22 @@ function NoteActions({ event: ev, actions, likeCount, zapCount, liked, bookmarke
       )}
       {isOwn && actions.onDelete && (
         <button type="button" className="btn-delete muted" onClick={() => actions.onDelete!(ev)} title="Delete">Delete</button>
+      )}
+      {/* Only on other people's notes. Delete withdraws your own note from
+          the network; Mute hides someone else's from your client and publishes
+          nothing. Offering both on one note would blur two different acts.
+
+          The mute list itself already existed, with an unmute UI in Settings,
+          and the only way to add to it was to paste a pubkey there by hand --
+          which is why a feed full of one account's reposts looked like
+          something the user could do nothing about. */}
+      {!isOwn && actions.onMuteAuthor && (
+        <button
+          type="button"
+          className="note-action-btn muted"
+          onClick={() => actions.onMuteAuthor!(ev)}
+          title="Hide everything from this account. Local only — nothing is published and they are not told."
+        >Mute</button>
       )}
     </div>
   );
