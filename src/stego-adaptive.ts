@@ -144,7 +144,7 @@ export interface PlatformProfile {
  */
 export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   whatsapp_standard: {
-    width: 1600, square: false, delta: 28,
+    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "Caps at 1600px, HD sends included. Measured 0.15-0.38% BER, up to 32KB payload.",
   },
   // Kept as an alias so any stored reference still resolves, but not offered
@@ -152,7 +152,7 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // same step, so two identical entries in the picker only invited the
   // question of which one to pick.
   whatsapp_hd: {
-    width: 1600, square: false, delta: 28,
+    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "Alias of whatsapp_standard -- HD uploads cap at the same 1600px.",
   },
   // 1280, which is what Telegram actually returns (§15.9).
@@ -202,7 +202,7 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // Kept only so images made by earlier versions still have their geometry
   // recorded. Not a fallback -- Telegram resamples it.
   telegram_photo_1600: {
-    width: 1600, square: false, delta: 28,
+    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "Historical: the old Telegram geometry, before it was found that Telegram outputs 1280x960.",
   },
   // Zigzag-restricted by default (§13.5). Chroma was removed here: measured on
@@ -218,15 +218,15 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
       + "Restricting to low frequencies survives re-encode measurably better and makes the capacity estimate honest.",
   },
   facebook: {
-    width: 2048, square: false, delta: 28,
+    width: 2048, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "Caps at 2048px (not independently verified).",
   },
   twitter: {
-    width: 1600, square: false, delta: 28,
+    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "Caps at 1600px (not independently verified).",
   },
   imessage: {
-    width: 1280, square: false, delta: 28,
+    width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "Conservative 1280px target.",
   },
   // Experiment profiles: identical to `instagram` except for step size, so a
@@ -355,7 +355,13 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
 };
 
-export const DEFAULT_PLATFORM = "whatsapp_standard";
+/**
+ * Fallback for callers that name no platform -- the MCP server, the CLI, any
+ * API user. It was "whatsapp_standard", which before this change meant an
+ * agent that omitted the argument silently got the untuned encoder. Same
+ * 1600px geometry, three times the perturbation.
+ */
+export const DEFAULT_PLATFORM = "universal";
 
 /**
  * Platforms worth putting in front of a user, in the order they should appear.
@@ -367,15 +373,30 @@ export const DEFAULT_PLATFORM = "whatsapp_standard";
  * in the record and drop out of the picker instead, behind a toggle so real
  * device bracketing is still possible without editing code.
  */
+/*
+ * ONE ENTRY PER DISTINCT ENCODING. The list used to name platforms that
+ * produce byte-identical output, which was not merely clutter -- the
+ * duplicates were WORSE than the generic entry that claimed to cover them.
+ *
+ * "Twitter/X (1600px)", "WhatsApp (1600px)" and "iMessage (1280px)" carried no
+ * lumaAcCount or rsNsym, so they fell back to the encoder defaults: all 24 AC
+ * positions and rsNsym 128. That is roughly 2.5 AC positions modified per
+ * block instead of one -- three times the perturbation, far less capacity, and
+ * bits written into the high frequencies that platform sharpening destroys
+ * first. Meanwhile "Universal", whose label said "WhatsApp, Twitter,
+ * Facebook", carried the tuned zigzag-6 / rsNsym-32 settings that were
+ * actually verified on a phone.
+ *
+ * So the specific-looking choice was the trap, and a user picking the entry
+ * with their platform's name on it got the worse encoder. Every profile now
+ * carries the verified tuning, and only distinct geometries are offered.
+ */
 export const USER_PLATFORMS: readonly string[] = [
-  "universal",
-  "whatsapp_standard",
-  "telegram_photo",
-  "telegram_file",
-  "instagram",
-  "facebook",
-  "twitter",
-  "imessage",
+  "universal",       // 1600 - WhatsApp, Twitter/X, Facebook
+  "telegram_photo",  // 1280 - also iMessage
+  "telegram_file",   // no resize, largest capacity
+  "instagram",       // 1440 square
+  "facebook",        // 2048, the one distinct larger canvas
   "none",
 ];
 

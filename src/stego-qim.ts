@@ -102,7 +102,7 @@ export const PLATFORM_WIDTHS: Record<string, number> = Object.fromEntries(
   Object.entries(PLATFORM_PROFILES).map(([k, v]) => [k, v.width]),
 );
 
-export const DEFAULT_PLATFORM = "whatsapp_standard";
+export const DEFAULT_PLATFORM = "universal";
 
 // ---------------------------------------------------------------------------
 // Options

@@ -9,6 +9,7 @@ import {
 } from "../dct";
 import { RSCodec } from "../reed-solomon";
 import { getQimCapacityBytes, PLATFORM_WIDTHS, DEFAULT_PLATFORM } from "../stego-qim";
+import { PLATFORM_PROFILES, USER_PLATFORMS } from "../stego-adaptive";
 
 // ---------------------------------------------------------------------------
 // DCT round-trip tests
@@ -261,9 +262,41 @@ describe("PLATFORM_WIDTHS", () => {
     expect(PLATFORM_WIDTHS.whatsapp_hd).toBeLessThanOrEqual(1600);
   });
 
-  it("default platform is a verified geometry", () => {
-    expect(DEFAULT_PLATFORM).toBe("whatsapp_standard");
+  it("default platform is a verified geometry AND the tuned encoder", () => {
+    // The fallback for callers that name no platform -- the MCP server, the
+    // CLI, any API user. It was "whatsapp_standard", which carried no
+    // lumaAcCount or rsNsym and so fell back to the encoder defaults: all 24
+    // AC positions and rsNsym 128, roughly 2.5 AC positions modified per block
+    // instead of one. An agent that omitted the argument silently got three
+    // times the perturbation at the same geometry.
+    expect(DEFAULT_PLATFORM).toBe("universal");
     expect(PLATFORM_WIDTHS[DEFAULT_PLATFORM]).toBe(1600);
+  });
+
+  it("every user-facing platform ships the tuned encoder, not the defaults", () => {
+    // The duplicates in the picker were not merely clutter: "Twitter/X",
+    // "WhatsApp" and "iMessage" declared no tuning, so choosing the entry with
+    // your platform's name on it gave a WORSE encoder than the generic
+    // "Universal" whose label claimed to cover them.
+    for (const name of USER_PLATFORMS) {
+      const prof = PLATFORM_PROFILES[name];
+      if (prof.width === 0) continue; // "none" does not resize or restrict
+      expect(`${name}:zigzag=${prof.lumaAcCount}`).toBe(`${name}:zigzag=6`);
+      expect(`${name}:rsNsym=${prof.rsNsym}`).toBe(`${name}:rsNsym=32`);
+    }
+  });
+
+  it("offers one entry per distinct encoding, with no duplicates", () => {
+    const seen = new Map<string, string>();
+    for (const name of USER_PLATFORMS) {
+      const p = PLATFORM_PROFILES[name];
+      const key = `${p.width}|${p.square}|${p.delta}|${p.lumaAcCount}|${p.rsNsym}|${p.chromaDelta}`;
+      const already = seen.get(key);
+      // A second name for the same output is a choice the user cannot make
+      // correctly, because both options do exactly the same thing.
+      expect(already ? `${name} duplicates ${already}` : name).toBe(name);
+      seen.set(key, name);
+    }
   });
 
   it("none has width 0 (no resize)", () => {
