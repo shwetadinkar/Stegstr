@@ -1,7 +1,7 @@
 # What this fork changes
 
 Against upstream `brunkstr/Stegstr` at fork point: **79 commits, 233 files,
-+21,311 / −875 lines.** 343 tests, `tsc --noEmit` clean, `npm run build` clean.
++21,311 / −875 lines.** 358 tests, `tsc --noEmit` clean, `npm run build` clean.
 
 The organising claim: **an image only carries hidden data through a chat app if
 the encoder is matched to what that specific app does to photos.** Everything
@@ -348,7 +348,7 @@ A `@napi-rs/canvas` polyfill (OffscreenCanvas, ImageData, createImageBitmap)
 lets the **real shipped encoder** run under vitest, so embed → channel → detect
 is asserted in CI. That is what caught the delta=14 defect.
 
-**343 tests**, covering the encoder round-trip, the relay pool and outbox,
+**358 tests**, covering the encoder round-trip, the relay pool and outbox,
 NIP-44 against spec vectors, capacity packing, the review flow, the pointer
 tier, slot ordering, encrypted attachments, and the desktop bridge.
 
