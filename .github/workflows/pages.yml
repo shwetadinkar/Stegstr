@@ -1,0 +1,51 @@
+# Publish the browser build to GitHub Pages.
+#
+# This is the lowest-friction way to try the app: one link, no install, no
+# unsigned-binary warning, and it works on a phone. It is also the build that
+# has been tested most, since development happens against it.
+name: Deploy web app
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never leave a half-published site: let a running deploy finish rather than
+# cancelling it mid-upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run build:pages
+      # Pages serves static files, so a deep link would 404 on refresh. This
+      # app is a single page, but copying index.html to 404.html costs nothing
+      # and makes any unexpected path land on the app instead of a GitHub error.
+      - run: cp dist/index.html dist/404.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
