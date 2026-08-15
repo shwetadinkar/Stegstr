@@ -16,9 +16,15 @@ export interface FeedViewProps {
   postAttachments: UploadedAttachment[];
   setPostAttachments: React.Dispatch<React.SetStateAction<UploadedAttachment[]>>;
   uploadingMedia: boolean;
-  /** Why the last attach failed, shown beside the button that caused it. */
-  attachError: string | null;
-  onDismissAttachError: () => void;
+  /**
+   * How the last attach went, shown beside the button that caused it.
+   *
+   * Not a toast: toasts are pinned to the top right next to the Network
+   * switch, which put the same message in two places at once and pulled the
+   * eye away from the control the user had just used.
+   */
+  attachNotice: { text: string; kind: "ok" | "error" } | null;
+  onDismissAttachNotice: () => void;
   postMediaInputRef: React.RefObject<HTMLInputElement | null>;
   handlePostMediaUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handlePost: () => void;
@@ -61,7 +67,7 @@ export interface FeedViewProps {
 
 export function FeedView({
   myPicture, myName, newPost, setNewPost, postAttachments, setPostAttachments,
-  uploadingMedia, attachError, onDismissAttachError, postMediaInputRef, handlePostMediaUpload, handlePost,
+  uploadingMedia, attachNotice, onDismissAttachNotice, postMediaInputRef, handlePostMediaUpload, handlePost,
   feedFilter, setFeedFilter,
   hideSensitive, setHideSensitive,
   notesEmpty, feedItems,
@@ -121,10 +127,13 @@ export function FeedView({
               screen -- so choosing a file and seeing nothing happen was
               indistinguishable from a dead button, and that is exactly how it
               was reported. */}
-          {attachError && (
-            <p className="attach-error" role="alert">
-              <span>{attachError}</span>
-              <button type="button" className="btn-remove" onClick={onDismissAttachError} aria-label="Dismiss">×</button>
+          {attachNotice && (
+            <p
+              className={`attach-notice attach-notice-${attachNotice.kind}`}
+              role={attachNotice.kind === "error" ? "alert" : "status"}
+            >
+              <span>{attachNotice.text}</span>
+              <button type="button" className="btn-remove" onClick={onDismissAttachNotice} aria-label="Dismiss">×</button>
             </p>
           )}
           {postAttachments.length > 0 && (

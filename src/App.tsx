@@ -278,16 +278,20 @@ function App({ profile }: { profile: string | null }) {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [status, setStatus] = useState<string>("");
   /**
-   * Why attaching failed, shown next to the Attach button.
+   * The outcome of the last attach, shown next to the Attach button.
    *
    * setStatus renders inside the Steganography aside, next to the embed and
    * detect controls. Attaching happens in the compose box at the top of the
    * main column, so every refusal and every upload error was written to a
    * panel the user was not looking at -- and clicking Attach, choosing a file
-   * and seeing nothing at all is indistinguishable from a dead button. That is
-   * how it was reported.
+   * and seeing nothing is indistinguishable from a dead button.
+   *
+   * Deliberately NOT also a toast. Toasts are fixed to the top right, beside
+   * the Network switch, so reporting both put the same green message in two
+   * places at once and drew the eye away from the control that caused it.
    */
-  const [attachError, setAttachError] = useState<string | null>(null);
+  const [attachNotice, setAttachNotice] =
+    useState<{ text: string; kind: "ok" | "error" } | null>(null);
   const [decodeError, setDecodeError] = useState<string>("");
   const [relayStatus, setRelayStatus] = useState<string>("");
   const [view, setView] = useState<View>("feed");
@@ -2640,26 +2644,32 @@ function App({ profile }: { profile: string | null }) {
     // while the app is telling the user nothing is sent. This path ignored the
     // switch entirely, which is the same failure as the pointer-resolution
     // leak.
+    // Attaching needs the network, so turn it on rather than refusing.
+    //
+    // Choosing a file IS the intent to upload it, and the note is still not
+    // posted until Post is pressed -- so refusing here made the user toggle a
+    // switch and repeat themselves to reach the outcome they had already asked
+    // for. This mirrors pointer mode, which has enabled the network on
+    // selection since §17.8 for exactly the same reason: make the dependency
+    // visible at the moment of choosing rather than as a refusal afterwards.
+    //
+    // It is said plainly, because the app promises that nothing is sent while
+    // Network is off and this is the moment that stops being true.
+    let turnedOn = false;
     if (!networkEnabled) {
-      const msg =
-        "Attaching uploads the file to a Blossom server, so it needs the network — " +
-        "and Network is off. The file is encrypted first; the server only ever holds " +
-        "ciphertext.";
-      setStatus(msg);
-      setAttachError(msg);
-      toast.error(msg);
-      return;
+      setNetworkEnabled(true);
+      turnedOn = true;
+      addStegoLog("Network turned on automatically: attaching uploads the file to a Blossom server.");
     }
     if (!effectivePrivKey) {
       const msg = "Attaching needs an identity to sign the upload. Log in first.";
       setStatus(msg);
-      setAttachError(msg);
-      toast.error(msg);
+      setAttachNotice({ text: msg, kind: "error" });
       return;
     }
 
     setUploadingMedia(true);
-    setAttachError(null);
+    setAttachNotice(null);
     try {
       const added: UploadedAttachment[] = [];
       for (const [i, file] of files.entries()) {
@@ -2668,22 +2678,23 @@ function App({ profile }: { profile: string | null }) {
       }
       setPostAttachments((prev) => [...prev, ...added]);
       const bytes = added.reduce((n, a) => n + a.size, 0);
+      const names = added.map((a) => a.name).join(", ");
       const ok =
-        `Attached ${added.length} file(s), ${(bytes / 1024).toFixed(0)} KB, encrypted. ` +
-        `The server holds ciphertext; only someone with your image can read them.`;
+        `Attached ${names} (${(bytes / 1024).toFixed(0)} KB), encrypted. ` +
+        `The server holds ciphertext. Press Post to publish the note.` +
+        (turnedOn ? " Network was turned on to upload." : "");
       setStatus(ok);
-      toast.success(ok);
+      setAttachNotice({ text: ok, kind: "ok" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(msg);
       // Kept until dismissed: an upload failure names which servers refused
       // and why, which is the one thing worth reading here.
-      setAttachError(msg);
-      toast.error(msg);
+      setAttachNotice({ text: msg, kind: "error" });
     } finally {
       setUploadingMedia(false);
     }
-  }, [networkEnabled, effectivePrivKey, toast]);
+  }, [networkEnabled, effectivePrivKey, addStegoLog]);
 
   const handleFollow = useCallback(
     async (theirPk: string) => {
@@ -2971,8 +2982,8 @@ function App({ profile }: { profile: string | null }) {
               postAttachments={postAttachments}
               setPostAttachments={setPostAttachments}
               uploadingMedia={uploadingMedia}
-              attachError={attachError}
-              onDismissAttachError={() => setAttachError(null)}
+              attachNotice={attachNotice}
+              onDismissAttachNotice={() => setAttachNotice(null)}
               postMediaInputRef={postMediaInputRef}
               handlePostMediaUpload={handlePostMediaUpload}
               handlePost={handlePost}
