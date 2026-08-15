@@ -180,6 +180,19 @@ jobs:
           [ -n "$APPIMG" ] && cp "$APPIMG" release-assets/Stegstr-Linux.AppImage
           ls -la release-assets/
 
+      # Checksums, which the README has told users to verify against since
+      # before they existed.
+      #
+      # "If you would rather not run someone else's binary" is a promise, and
+      # `sha256sum -c SHA256SUMS` fails at the first step if the file is not
+      # published. Generated here so the instruction works.
+      - name: Generate SHA256SUMS
+        shell: bash
+        working-directory: release-assets
+        run: |
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -197,6 +210,18 @@ jobs:
             - **macOS**: `Stegstr-macOS.dmg`
             - **Windows**: `Stegstr-Windows.exe` or `Stegstr-Windows.msi`
             - **Linux**: `Stegstr-Linux.deb` (`sudo apt install ./Stegstr-Linux.deb`) or `Stegstr-Linux.AppImage`
+
+            **Verifying your download.** `SHA256SUMS` is attached. Download it
+            alongside the installer and check it:
+
+            ```
+            sha256sum -c SHA256SUMS          # Linux
+            shasum -a 256 -c SHA256SUMS      # macOS
+            ```
+
+            This release was built from `${{ github.sha }}` by the public
+            workflow in this repository, so the binary can be traced to its
+            source and rebuilt from scratch.
 
             **First launch on macOS.** The build is unsigned, so macOS blocks it
             once. Open **System Settings → Privacy & Security**, scroll to
