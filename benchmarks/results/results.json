@@ -1,6 +1,6 @@
 {
-  "started": "2026-08-15T01:56:56.704Z",
-  "finished": "2026-08-15T02:01:14.375Z",
+  "started": "2026-08-15T05:06:25.964Z",
+  "finished": "2026-08-15T05:11:31.823Z",
   "platforms": [
     {
       "platform": "universal",
@@ -11,7 +11,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 853,
+      "encodeMs": 932,
       "note": "1600px, step 28"
     },
     {
@@ -23,7 +23,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 1449,
+      "encodeMs": 1495,
       "note": "Caps at 1600px, HD sends included"
     },
     {
@@ -35,7 +35,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 739,
+      "encodeMs": 882,
       "note": "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled and lost"
     },
     {
@@ -47,7 +47,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 1044,
+      "encodeMs": 1069,
       "note": "No resize, step 20"
     },
     {
@@ -59,7 +59,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 790,
+      "encodeMs": 970,
       "note": "1440x1440 square, step 56, lowest 6 AC positions"
     },
     {
@@ -71,7 +71,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 1618,
+      "encodeMs": 1955,
       "note": "Caps at 2048px (not independently verified)"
     },
     {
@@ -83,7 +83,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 1477,
+      "encodeMs": 1858,
       "note": "Caps at 1600px (not independently verified)"
     },
     {
@@ -95,7 +95,7 @@
       "selfTest": true,
       "survivedChannel": true,
       "ber": 0,
-      "encodeMs": 1003,
+      "encodeMs": 1166,
       "note": "Conservative 1280px target"
     }
   ],

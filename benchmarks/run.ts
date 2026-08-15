@@ -1,7 +1,7 @@
 /**
  * benchmarks/run.ts — reproduce the project's headline claims on demand.
  *
- * Every number in CHANGES.md and HANDOFF.md came from somewhere, but "trust
+ * Every number in CHANGES.md and the engineering log came from somewhere, but "trust
  * the document" is a weak position when someone is deciding between
  * submissions. This runs the claims that CAN be checked without a phone and
  * writes the results next to the code, so the whole set can be reproduced in
@@ -13,13 +13,13 @@
  *
  * The channel here is a resize plus a JPEG re-encode. Real platforms also
  * sharpen, and Instagram's damage is sharpening rather than quantization
- * (HANDOFF §10.3) -- which is exactly why a simulator makes Instagram look
+ * (the engineering log §10.3) -- which is exactly why a simulator makes Instagram look
  * like an easy channel when a phone says otherwise. Upstream's documented
  * sim-to-real failure came from trusting a simulator on this specific point.
  *
  * So: a PASS here means the encoder is internally consistent and survives
  * recompression at the modelled quality. It does not mean the payload survives
- * WhatsApp. Only the phone results in HANDOFF §15-17 say that, and they were
+ * WhatsApp. Only the phone results in the engineering log §15-17 say that, and they were
  * gathered by hand.
  */
 
@@ -197,10 +197,10 @@ const md = [
   "",
   "**These are simulator results.** The channel modelled here is a resize plus a",
   "JPEG re-encode. Real platforms also sharpen, and Instagram's damage is",
-  "sharpening rather than quantization (HANDOFF §10.3) — which is why a simulator",
+  "sharpening rather than quantization (the engineering log §10.3) — which is why a simulator",
   "flatters Instagram. A pass below means the encoder is internally consistent and",
   "survives recompression; it does **not** establish that the payload survives a",
-  "real platform. That claim rests on the phone testing in HANDOFF §15–17.",
+  "real platform. That claim rests on the phone testing in the engineering log §15–17.",
   "",
   "## Platform matrix",
   "",

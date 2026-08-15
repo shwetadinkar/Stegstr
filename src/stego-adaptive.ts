@@ -80,7 +80,7 @@ export interface PlatformProfile {
   rsNsym?: number;
   /**
    * Number of luma AC positions to use, starting from the lowest frequency
-   * (zigzag 1). Undefined means all 24 (unchanged behaviour). HANDOFF.md
+   * (zigzag 1). Undefined means all 24 (unchanged behaviour). the engineering log
    * §10.4 option 2: Instagram's sharpening hits high frequencies hardest,
    * so restricting to a low-frequency subset means every surviving bit
    * sits somewhere sharpening disturbs less -- fewer slots per block, but

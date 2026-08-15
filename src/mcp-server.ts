@@ -12,7 +12,7 @@
  *
  * This server calls the SHIPPED TypeScript QIM encoder directly -- the same
  * code path the UI uses and the same one every platform measurement in
- * HANDOFF.md was made against. There is deliberately no second implementation
+ * the engineering log was made against. There is deliberately no second implementation
  * to drift out of step: an agent and a human clicking Embed produce byte-for-
  * byte comparable images.
  *
@@ -62,7 +62,7 @@ async function fileFrom(path: string): Promise<File> {
  *
  * Detail is what hides the payload and what lets it survive recompression, and
  * it is not a property anyone would guess at -- a flat cover fails the
- * round-trip outright (HANDOFF §10.6). Measured covers ranged from ~9 on a
+ * round-trip outright (the engineering log §10.6). Measured covers ranged from ~9 on a
  * smooth interior shot to ~45 on dense foliage, and the foliage ones passed
  * Instagram first time where the smooth one was marginal.
  */

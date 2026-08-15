@@ -155,7 +155,7 @@ export interface QimOptions {
    */
   adaptive?: boolean;
   /**
-   * QIM step for chroma-channel embedding (§10.4 in HANDOFF.md). Undefined
+   * QIM step for chroma-channel embedding (engineering log §10.4). Undefined
    * (default) means chroma embedding is off -- luma-only, identical to
    * pre-chroma behaviour. Chroma bits are filled before any luma slot, so a
    * payload that fits in chroma capacity needs zero luma modifications.
@@ -166,7 +166,7 @@ export interface QimOptions {
   /**
    * Number of luma AC positions to use, starting from the lowest frequency
    * (zigzag 1). Default is all 24 (AC_INDICES.length), unchanged behaviour.
-   * HANDOFF.md §10.4 option 2: Instagram's sharpening hits high frequencies
+   * the engineering log §10.4 option 2: Instagram's sharpening hits high frequencies
    * hardest, so restricting to a low-frequency subset (e.g. 6) means every
    * surviving bit sits somewhere sharpening disturbs less -- fewer slots per
    * block, but each more robust, which may permit a smaller delta for the
@@ -258,7 +258,7 @@ function majorityBits(bits: number[], repeat: number): number[] {
  *
  * Only applied to chroma. Luma's AC-major ordering already spreads a single
  * AC position across the whole image before advancing (see buildCoeffStream)
- * and is validated working on real platforms (HANDOFF.md §10.1) -- changing
+ * and is validated working on real platforms (the engineering log §10.1) -- changing
  * it risks regressing something with no measured problem to justify it.
  */
 function interleavedPhysicalIndex(logicalIndex: number, capacity: number, repeat: number): number {
@@ -357,7 +357,7 @@ function buildCoeffStream(
   // concentrating modifications in the top rows of blocks.
   //
   // acCount restricts how many of the 24 AC positions (zigzag 1-24) are
-  // actually used, starting from the lowest frequency (zigzag 1). HANDOFF.md
+  // actually used, starting from the lowest frequency (zigzag 1). the engineering log
   // §10.4 option 2: Instagram's sharpening hits high frequencies hardest, so
   // restricting to the lowest few (e.g. zigzag 1-6) means every surviving
   // bit sits somewhere sharpening disturbs less -- fewer slots, but each
@@ -623,7 +623,7 @@ export async function embedQim(
   const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount, slotOrder);
 
   // Chroma slots are filled before any luma slot (see stego-color.ts and
-  // §10.4 in HANDOFF.md): chroma perturbation is far less visible than luma,
+  // §10.4 in the engineering log): chroma perturbation is far less visible than luma,
   // so a payload that fits entirely in chroma capacity needs zero luma
   // modifications instead of just fewer.
   const superBlocksY = Math.floor(height / CHROMA_SUPERBLOCK_PX);

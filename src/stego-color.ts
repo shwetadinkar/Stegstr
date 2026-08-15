@@ -1,6 +1,6 @@
 /**
  * RGB <-> YCbCr conversion and chroma super-block read/write for
- * chroma-channel QIM embedding (HANDOFF.md §10.4, §11 second addendum).
+ * chroma-channel QIM embedding (the engineering log §10.4, §11 second addendum).
  *
  * The real JPEG encoder subsamples chroma 2x2 before its own DCT (verified
  * empirically against @napi-rs/canvas: a chroma pattern at the Nyquist
