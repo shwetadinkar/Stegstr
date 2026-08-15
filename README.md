@@ -23,6 +23,34 @@ Download the latest release for your platform:
 
 See [Releases](https://github.com/shwetadinkar/Stegstr/releases) for all builds.
 
+**macOS — first launch.** The build is not signed with an Apple Developer
+certificate, so macOS blocks it the first time. To allow it:
+
+1. Try to open **Stegstr** — macOS will refuse and say it cannot be verified.
+2. Open **System Settings → Privacy & Security**, scroll to the **Security**
+   section at the bottom.
+3. Next to "Stegstr was blocked", click **Open Anyway**, then **Open** to
+   confirm.
+
+You only do this once. Note that Control-clicking the app and choosing Open no
+longer bypasses this on macOS Sequoia (15) and later — the Privacy & Security
+route is the only one.
+
+If you prefer the terminal, this achieves the same thing in one step:
+
+```bash
+xattr -cr /Applications/Stegstr.app
+```
+
+**Linux.** The `.deb` declares its dependencies, so install it with apt rather
+than dpkg and they resolve automatically:
+
+```bash
+sudo apt install ./Stegstr-Linux.deb
+```
+
+The `.AppImage` needs no installation — `chmod +x` it and run it.
+
 ### Send your first hidden message
 
 1. Write a post, or let your existing feed be the payload.
