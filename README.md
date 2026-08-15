@@ -4,6 +4,25 @@
 
 This fork adds one thing above all: **images that survive being sent through WhatsApp, Telegram and Instagram.** Those platforms re-encode every photo you send. An image that carries hidden data through your filesystem will usually lose it the moment it goes through a chat app. Every setting here was measured against the real platforms on a real phone, and the app ships the numbers that worked.
 
+## What this fork adds
+
+Everything below was measured against the real services on a real device, and the numbers are the ones the app ships.
+
+| | |
+|---|---|
+| **6.6× the hidden capacity** | X/Twitter and WhatsApp HD keep a 4096px image intact, carrying **~25 KB per photo** against 3.9 KB at 1600px. Verified end to end on a phone. |
+| **Every channel measured** | WhatsApp (normal and HD), Telegram (as photo and as file), Instagram, X/Twitter and Facebook — each confirmed by sending an image through it and reading the payload back. |
+| **Encrypted attachments, any file type** | Documents, video, archives. Encrypted before upload; the host stores ciphertext and never learns the filename or the type. 50 MB tested. |
+| **Pointer mode** | A ~260-byte reference in the photo, content encrypted on a relay — for channels too tight for a full payload. |
+| **Built for AI agents** | An MCP server exposing the same encoder the app uses, so an agent can embed and detect directly. |
+| **343 tests** | Including the real shipped encoder driven through a simulated channel, which is what caught a step size that failed on a phone while passing every unit test. |
+
+The organising claim, and the reason most of this exists: **an image only carries hidden data through a chat app if the encoder is matched to what that specific app does to photos.** Get the geometry wrong and the payload is not degraded — it is destroyed.
+
+[CHANGES.md](CHANGES.md) has the full list against upstream, with the measurements behind each number.
+
+---
+
 Stegstr gives you two ways to use it:
 
 - **UI app** — Desktop and mobile. Write posts, hide them in a photo, and read hidden content out of photos you receive.
