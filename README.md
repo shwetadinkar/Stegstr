@@ -15,6 +15,15 @@ Both use the same steganographic format. Data is stored and processed **locally*
 
 ## Quick start
 
+### Try it in a browser — nothing to install
+
+**https://shwetadinkar.github.io/Stegstr/**
+
+Works on desktop and mobile. Embedding and detecting run entirely in your
+browser; with the Network toggle off, nothing is sent anywhere. This is the
+same code as the desktop app and the build every platform measurement was
+made against.
+
 ### Graphical app (UI)
 
 Download the latest release for your platform:
