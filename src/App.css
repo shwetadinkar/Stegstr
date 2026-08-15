@@ -1124,3 +1124,10 @@ textarea { resize: vertical; min-height: 60px; }
   margin-bottom: 0.4rem;
 }
 .embed-group label { display: inline-flex; align-items: center; gap: 0.3rem; }
+
+/* Encrypted attachments on a note.
+   Nothing is fetched until the reader asks: the blob is ciphertext, so there
+   is nothing to preview, and fetching it would tell a third-party server that
+   this note was opened. */
+.note-attachments { margin: 0.4rem 0 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.note-attachments .btn-small { align-self: flex-start; font-size: 0.78rem; }

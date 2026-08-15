@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { parseAttachmentTokens, stripAttachmentTokens } from "./blossom";
 import { extractImageUrls, mediaUrlsFromTags, isVideoUrl, contentWithoutImages } from "./utils";
 import { MAX_NOTE_USER_CONTENT } from "./constants";
 import type { NostrEvent, ProfileData } from "./types";
@@ -69,7 +71,11 @@ export function NoteCard({
   const displayName = profile?.name ?? `${ev.pubkey.slice(0, 8)}…`;
   const likeCount = getLikeCount(ev.id);
 
-  const textContent = contentWithoutImages(ev.content).trim() || ev.content.trim();
+  // Attachment tokens carry a decryption key, so they must never be shown as
+  // text. Strip them for display and render them as controls instead.
+  const attachments = parseAttachmentTokens(ev.content);
+  const textContent =
+    stripAttachmentTokens(contentWithoutImages(ev.content).trim() || ev.content.trim());
   const displayText = contentMaxChars > 0 && textContent.length > contentMaxChars
     ? textContent.slice(0, contentMaxChars) + "…"
     : textContent;
@@ -102,6 +108,7 @@ export function NoteCard({
         </div>
         <div className={`note-content${contentMaxChars > 0 ? " note-content-preview" : ""}`}>
           {displayText && <p>{displayText}</p>}
+          {attachments.length > 0 && <EncryptedAttachments items={attachments} />}
           {showMedia && <NoteMedia event={ev} />}
         </div>
         {showActions && (
@@ -116,6 +123,65 @@ export function NoteCard({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Encrypted attachments referenced by a note.
+ *
+ * Nothing is fetched until asked. The blob is ciphertext on a third-party
+ * server, so there is nothing to preview, and fetching it tells that server
+ * someone opened this note -- which should be the reader\'s decision, not a
+ * side effect of scrolling past.
+ */
+function EncryptedAttachments({ items }: { items: Array<{ url: string; key: string }> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const open = async (item: { url: string; key: string }) => {
+    setBusy(item.url);
+    setErrors((e) => ({ ...e, [item.url]: "" }));
+    try {
+      const { fetchEncrypted } = await import("./blossom");
+      const file = await fetchEncrypted(item.url, item.key);
+      // Hand it to the browser as a download rather than trying to render it:
+      // it may be any type at all, and the user asked for the file.
+      const href = URL.createObjectURL(file);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(href), 2000);
+    } catch (err) {
+      setErrors((e) => ({ ...e, [item.url]: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="note-attachments">
+      {items.map((item) => (
+        <div key={item.url}>
+          <button
+            type="button"
+            className="btn-small"
+            disabled={busy === item.url}
+            onClick={(e) => { e.stopPropagation(); void open(item); }}
+            title={`Encrypted attachment on ${(() => { try { return new URL(item.url).host; } catch { return "a server"; } })()}`}
+          >
+            {busy === item.url ? "Decrypting…" : "🔒 Download encrypted attachment"}
+          </button>
+          {errors[item.url] && (
+            <p className="muted" style={{ fontSize: "0.75rem", color: "#b23", margin: "0.2rem 0 0" }}>
+              {errors[item.url]}
+            </p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

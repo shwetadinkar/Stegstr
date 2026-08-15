@@ -16,7 +16,7 @@ import {
   qimSelfTest,
   getQimCapacityForFile,
 } from "./stego-qim";
-import { uploadMedia, isUploadableMedia } from "./upload";
+import { uploadEncrypted, attachmentToToken, type UploadedAttachment } from "./blossom";
 import { ensureStegstrSuffix } from "./constants";
 import * as stegoCrypto from "./stego-crypto";
 import * as logger from "./logger";
@@ -279,7 +279,9 @@ function App({ profile }: { profile: string | null }) {
   const [events, setEvents] = useState<NostrEvent[]>([]);
   const [profiles, setProfiles] = useState<Record<string, ProfileData>>({});
   const [newPost, setNewPost] = useState("");
-  const [postMediaUrls, setPostMediaUrls] = useState<string[]>([]);
+  // Attachments are encrypted before upload, so a note carries a token
+  // (url + key) rather than a public URL. See blossom.ts.
+  const [postAttachments, setPostAttachments] = useState<UploadedAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [status, setStatus] = useState<string>("");
   const [decodeError, setDecodeError] = useState<string>("");
@@ -2286,11 +2288,19 @@ function App({ profile }: { profile: string | null }) {
   const handlePost = useCallback(async () => {
     if (!effectivePrivKey) return;
     const textPart = newPost.trim();
-    const mediaPart = postMediaUrls.length ? "\n" + postMediaUrls.join("\n") : "";
-    if (!textPart && !postMediaUrls.length) return;
+    // Each attachment becomes one token carrying its URL and key. The key
+    // never reaches the host, and the note itself is encrypted inside the
+    // stego image, so the token is only readable by whoever you send it to.
+    const mediaPart = postAttachments.length
+      ? "\n" + postAttachments.map(attachmentToToken).join("\n")
+      : "";
+    if (!textPart && !postAttachments.length) return;
     const sk = Nostr.hexToBytes(effectivePrivKey);
     const content = ensureStegstrSuffix((textPart || " ") + mediaPart);
-    const tags: string[][] = postMediaUrls.flatMap((url) => [["im", url]]);
+    // No "im" tags: those advertise a public image URL to other clients, and
+    // these blobs are encrypted -- a client that fetched one would render
+    // noise, and it would leak which server holds it.
+    const tags: string[][] = [];
     const ev = await Nostr.finishEventAsync(
       {
         kind: 1,
@@ -2302,11 +2312,11 @@ function App({ profile }: { profile: string | null }) {
     );
     setEvents((prev) => [ev as NostrEvent, ...prev]);
     setNewPost("");
-    setPostMediaUrls([]);
+    setPostAttachments([]);
     if (networkEnabled && canPublishToNetwork) publishViaRelay(ev as NostrEvent);
     setStatus("Posted");
-    logger.logAction("post", "Posted note", { networkEnabled, contentLength: content.length, mediaCount: postMediaUrls.length });
-  }, [effectivePrivKey, newPost, postMediaUrls, networkEnabled, canPublishToNetwork]);
+    logger.logAction("post", "Posted note", { networkEnabled, contentLength: content.length, mediaCount: postAttachments.length });
+  }, [effectivePrivKey, newPost, postAttachments, networkEnabled, canPublishToNetwork]);
 
   const handleLike = useCallback(
     async (note: NostrEvent) => {
@@ -2592,15 +2602,15 @@ function App({ profile }: { profile: string | null }) {
     if (!files?.length) return;
     e.target.value = "";
 
-    // Attaching UPLOADS the file to a third-party host. With the network off
-    // the app promises "nothing is sent", and this path ignored that entirely
-    // -- the same failure as the pointer-resolution leak. Refuse, and say what
-    // turning it on would mean.
+    // Attaching uploads the file to a third-party host, so it cannot happen
+    // while the app is telling the user nothing is sent. This path ignored the
+    // switch entirely, which is the same failure as the pointer-resolution
+    // leak.
     if (!networkEnabled) {
       setStatus(
-        "Attaching uploads the file to nostr.build, so it needs the network — " +
-        "and Network is off. Turn it on if you want to attach; the file will be " +
-        "publicly readable by anyone with the link.",
+        "Attaching uploads the file to a Blossom server, so it needs the network — " +
+        "and Network is off. The file is encrypted first; the server only ever holds " +
+        "ciphertext.",
       );
       return;
     }
@@ -2610,27 +2620,19 @@ function App({ profile }: { profile: string | null }) {
     }
 
     setUploadingMedia(true);
-    setStatus("Uploading…");
     try {
-      const urls: string[] = [];
-      const skipped: string[] = [];
+      const added: UploadedAttachment[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        if (!isUploadableMedia(file)) { skipped.push(file.name); continue; }
-        urls.push(await uploadMedia(file, effectivePrivKey));
+        setStatus(`Encrypting and uploading ${file.name} (${i + 1}/${files.length})…`);
+        added.push(await uploadEncrypted(file, effectivePrivKey));
       }
-      setPostMediaUrls((prev) => [...prev, ...urls]);
-      // Say which files were skipped and why. The previous version dropped
-      // them silently and reported "Select image or video files", which read
-      // as though nothing had been selected at all.
-      const parts: string[] = [];
-      if (urls.length) parts.push(`Attached ${urls.length} file(s) — public link${urls.length > 1 ? "s" : ""}`);
-      if (skipped.length) {
-        parts.push(
-          `skipped ${skipped.join(", ")}: nostr.build hosts images and video only`,
-        );
-      }
-      setStatus(parts.join(". ") || "Nothing to attach.");
+      setPostAttachments((prev) => [...prev, ...added]);
+      const bytes = added.reduce((n, a) => n + a.size, 0);
+      setStatus(
+        `Attached ${added.length} file(s), ${(bytes / 1024).toFixed(0)} KB, encrypted. ` +
+        `The server holds ciphertext; only someone with your image can read them.`,
+      );
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2904,8 +2906,8 @@ function App({ profile }: { profile: string | null }) {
               myName={myName}
               newPost={newPost}
               setNewPost={setNewPost}
-              postMediaUrls={postMediaUrls}
-              setPostMediaUrls={setPostMediaUrls}
+              postAttachments={postAttachments}
+              setPostAttachments={setPostAttachments}
               uploadingMedia={uploadingMedia}
               postMediaInputRef={postMediaInputRef}
               handlePostMediaUpload={handlePostMediaUpload}

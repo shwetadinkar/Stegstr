@@ -1,6 +1,7 @@
 import type React from "react";
 import { NoteThread } from "./NoteCard";
 import type { NoteCardActions, NoteCardState } from "./NoteCard";
+import type { UploadedAttachment } from "./blossom";
 import type { NostrEvent, ProfileData, View } from "./types";
 import { MAX_NOTE_USER_CONTENT } from "./constants";
 
@@ -12,8 +13,8 @@ export interface FeedViewProps {
   myName: string;
   newPost: string;
   setNewPost: React.Dispatch<React.SetStateAction<string>>;
-  postMediaUrls: string[];
-  setPostMediaUrls: React.Dispatch<React.SetStateAction<string[]>>;
+  postAttachments: UploadedAttachment[];
+  setPostAttachments: React.Dispatch<React.SetStateAction<UploadedAttachment[]>>;
   uploadingMedia: boolean;
   postMediaInputRef: React.RefObject<HTMLInputElement | null>;
   handlePostMediaUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -56,7 +57,7 @@ export interface FeedViewProps {
 }
 
 export function FeedView({
-  myPicture, myName, newPost, setNewPost, postMediaUrls, setPostMediaUrls,
+  myPicture, myName, newPost, setNewPost, postAttachments, setPostAttachments,
   uploadingMedia, postMediaInputRef, handlePostMediaUpload, handlePost,
   feedFilter, setFeedFilter,
   hideSensitive, setHideSensitive,
@@ -84,32 +85,39 @@ export function FeedView({
             className="wide"
             maxLength={MAX_NOTE_USER_CONTENT}
           />
-          {postMediaUrls.length > 0 && (
+          {postAttachments.length > 0 && (
             <div className="post-media-preview">
-              {postMediaUrls.map((url, i) => (
-                <span key={i} className="post-media-item">
-                  {url.match(/\.(gif|jpg|jpeg|png|webp)(\?|$)/i) ? (
-                    <img src={url} alt="" />
-                  ) : (
-                    <a href={url} target="_blank" rel="noreferrer">{url.slice(0, 40)}…</a>
-                  )}
-                  <button type="button" className="btn-remove muted" onClick={() => setPostMediaUrls((p) => p.filter((_, j) => j !== i))}>×</button>
+              {postAttachments.map((a, i) => (
+                <span key={a.url} className="post-media-item">
+                  {/* No thumbnail: the blob on the server is ciphertext, so
+                      there is nothing to render without decrypting it. Show
+                      what the recipient will get instead. */}
+                  <span title={`${a.type || "file"} · encrypted · ${a.server}`}>
+                    🔒 {a.name} ({(a.size / 1024).toFixed(0)} KB)
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-remove muted"
+                    onClick={() => setPostAttachments((p) => p.filter((_, j) => j !== i))}
+                  >×</button>
                 </span>
               ))}
             </div>
           )}
           <div className="compose-actions">
-            <input ref={postMediaInputRef} type="file" accept="image/*,video/*" multiple className="hidden-input" onChange={handlePostMediaUpload} />
-            <button type="button" className="btn-secondary" onClick={() => postMediaInputRef.current?.click()} disabled={uploadingMedia} title="Add photo or video">
-              {uploadingMedia ? "Uploading…" : "Attach image or video"}
+            {/* No accept filter: the file is encrypted and carried inside a
+                PNG, so the host never sees its real type and any file works. */}
+            <input ref={postMediaInputRef} type="file" multiple className="hidden-input" onChange={handlePostMediaUpload} />
+            <button type="button" className="btn-secondary" onClick={() => postMediaInputRef.current?.click()} disabled={uploadingMedia} title="Attach any file — encrypted before upload">
+              {uploadingMedia ? "Encrypting…" : "Attach file"}
             </button>
-            <button type="button" onClick={handlePost} className="btn-primary" disabled={(!newPost.trim() && postMediaUrls.length === 0) || uploadingMedia}>Post</button>
+            <button type="button" onClick={handlePost} className="btn-primary" disabled={(!newPost.trim() && postAttachments.length === 0) || uploadingMedia}>Post</button>
           </div>
-          {postMediaUrls.length > 0 && (
-            <p className="muted" style={{ fontSize: "0.75rem", margin: "0.25rem 0 0" }}>
-              Attachments are uploaded to nostr.build and are <strong>public</strong> — anyone
-              with the link can view them. Only the link travels inside the image, so a small
-              cover can carry a large video.
+          {postAttachments.length > 0 && (
+            <p className="muted" style={{ fontSize: "0.75rem", margin: "0.25rem 0 0", lineHeight: 1.4 }}>
+              Encrypted before upload — the server stores ciphertext and cannot see the
+              file, its name or its type. Only the link and key travel inside your image,
+              so a small photo can carry a large file.
             </p>
           )}
           <p className="muted char-counter">{newPost.length}/{MAX_NOTE_USER_CONTENT} (appends &quot; Sent by Stegstr.&quot;)</p>
