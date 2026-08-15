@@ -10,6 +10,12 @@ import DetectResultModal, { type DetectedEvent } from "./DetectResultModal";
 import { verifyEvent, packForCapacity } from "./sync-engine";
 import { uint8ArrayToBase64, isLocallyHidden } from "./utils";
 import {
+  getDefaultFollowPubkeys,
+  usingDefaultFollows,
+  currentContactPubkeys,
+  contactListTags,
+} from "./follow-list";
+import {
   decodeQimImageFile,
   encodeQimImageFile,
   resizeCoverForPlatform,
@@ -127,25 +133,6 @@ const BASE_RELAYS = "stegstr_relays";
 const BASE_ZAP_QUEUE = "stegstr_zap_queue";
 const BASE_DM_READ = "stegstr_dm_read_timestamps";
 const BASE_NOTIF_READ = "stegstr_notification_read_at";
-
-/** Default follows for new local identities so the feed shows posts when network is on. */
-const DEFAULT_FOLLOW_NPUBS = [
-  "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m", // jack
-  "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6", // fiatjaf
-  "npub1rs787tkd6mle8jxvqr07zngzf8h6qu5fc8g3jfdtj8xux9a6aumqkdgtgf",
-  "npub1c3lf9hdmghe4l7xcy8phlhepr66hz7wp5dnkpwxjvw8x7hzh0pesc9mpv4",
-  "npub1gcxzte5zlknqx26dzuyuzhhnz5q4fvnvcyn0x0cpqvjq0s8qfjds0x2df2",
-];
-function getDefaultFollowPubkeys(): string[] {
-  const out: string[] = [];
-  for (const npub of DEFAULT_FOLLOW_NPUBS) {
-    try {
-      const d = Nostr.nip19.decode(npub);
-      if (d.type === "npub" && d.data.length === 32) out.push(Nostr.bytesToHex(d.data));
-    } catch (_) {}
-  }
-  return out;
-}
 
 function getStorageProfileSync(): string | null {
   if (typeof window === "undefined") return null;
@@ -591,7 +578,12 @@ function App({ profile }: { profile: string | null }) {
     const kind3 = events.find((e) => e.kind === 3 && e.pubkey === pk);
     return kind3 ? kind3.tags.filter((t) => t[0] === "p").map((t) => t[1]) : [];
   });
-  if (actingIdentity?.category === "local" && actingPubkey && viewingPubkeys.has(actingPubkey) && !events.some((e) => e.kind === 3 && e.pubkey === actingPubkey)) {
+  // Same predicate the follow handlers use, so what is displayed and what an
+  // edit starts from cannot drift apart.
+  if (
+    actingPubkey && viewingPubkeys.has(actingPubkey) &&
+    usingDefaultFollows(events, actingPubkey, actingIdentity?.category)
+  ) {
     contacts = [...contacts, ...getDefaultFollowPubkeys()];
   }
   const contactsSet = new Set(contacts);
@@ -2650,14 +2642,19 @@ function App({ profile }: { profile: string | null }) {
     async (theirPk: string) => {
       if (!effectivePrivKey || !pubkey) return;
       const kind3 = events.find((e) => e.kind === 3 && e.pubkey === pubkey);
-      const existingTags = kind3 ? kind3.tags.filter((t) => t[0] === "p") : [];
-      if (existingTags.some((t) => t[1] === theirPk)) {
+      // The effective list, not just the stored one: on a new local identity
+      // the defaults are being followed without any kind 3 to hold them, and
+      // starting from [] here silently dropped every one of them.
+      const existing = currentContactPubkeys(
+        events, pubkey, usingDefaultFollows(events, pubkey, actingIdentity?.category),
+      );
+      if (existing.includes(theirPk)) {
         setStatus("Already following");
         return;
       }
       try {
         const sk = Nostr.hexToBytes(effectivePrivKey);
-        const newTags = [...existingTags.map((t) => ["p", t[1]]), ["p", theirPk]];
+        const newTags = contactListTags(kind3, [...existing, theirPk]);
         const ev = await Nostr.finishEventAsync(
           { kind: 3, content: kind3?.content ?? "", tags: newTags, created_at: Math.floor(Date.now() / 1000) },
           sk
@@ -2671,19 +2668,30 @@ function App({ profile }: { profile: string | null }) {
         logger.logError("Follow failed", e, { theirPk: theirPk.slice(0, 8) + "…" });
       }
     },
-    [effectivePrivKey, pubkey, events, networkEnabled, canPublishToNetwork]
+    [effectivePrivKey, pubkey, events, networkEnabled, canPublishToNetwork, actingIdentity?.category]
   );
 
   const handleUnfollow = useCallback(
     async (theirPk: string) => {
       if (!effectivePrivKey || !pubkey) return;
       const kind3 = events.find((e) => e.kind === 3 && e.pubkey === pubkey);
-      if (!kind3) return;
-      const newTags = kind3.tags.filter((t) => t[0] !== "p" || t[1] !== theirPk);
+      // `if (!kind3) return` used to sit here, which is why Unfollow did
+      // nothing on a new local identity: the defaults are followed without any
+      // kind 3 to remove them from. Materialise the effective list, minus this
+      // person, so the first unfollow writes the contact list the UI has been
+      // showing all along.
+      const existing = currentContactPubkeys(
+        events, pubkey, usingDefaultFollows(events, pubkey, actingIdentity?.category),
+      );
+      if (!existing.includes(theirPk)) {
+        setStatus("Not following that account");
+        return;
+      }
+      const newTags = contactListTags(kind3, existing.filter((pk) => pk !== theirPk));
       try {
         const sk = Nostr.hexToBytes(effectivePrivKey);
         const ev = await Nostr.finishEventAsync(
-          { kind: 3, content: kind3.content, tags: newTags, created_at: Math.floor(Date.now() / 1000) },
+          { kind: 3, content: kind3?.content ?? "", tags: newTags, created_at: Math.floor(Date.now() / 1000) },
           sk
         );
         setEvents((prev) => prev.filter((e) => !(e.kind === 3 && e.pubkey === pubkey)).concat(ev as NostrEvent).sort((a, b) => b.created_at - a.created_at));
@@ -2693,7 +2701,7 @@ function App({ profile }: { profile: string | null }) {
         setStatus("Unfollow failed: " + (e instanceof Error ? e.message : String(e)));
       }
     },
-    [effectivePrivKey, pubkey, events, networkEnabled, canPublishToNetwork]
+    [effectivePrivKey, pubkey, events, networkEnabled, canPublishToNetwork, actingIdentity?.category]
   );
 
   useEffect(() => {
