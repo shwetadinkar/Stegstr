@@ -225,7 +225,7 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
   facebook: {
     width: 2048, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    note: "Caps at 2048px (not independently verified).",
+    note: "VERIFIED END TO END on a real account: a 2048x1152 upload comes back 2048x1152 and the payload reads back. Confirmed from a 4000x2250 cover, which this profile resizes to 2048x1152 before sending. Geometry was inherited from upstream and unmeasured until then. ~6.4KB.",
   },
   twitter: {
     width: 4096, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,

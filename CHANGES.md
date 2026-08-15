@@ -30,6 +30,7 @@ block boundaries and reads noise. Every catastrophic failure observed measured
 | Telegram, as photo | re-encodes **every** photo to 1280×960 | 1280×960 |
 | Telegram, as file | no recompression at all | no resize |
 | Instagram | normalises everything to a 1440 square | 1440×1440 |
+| Facebook | passes 2048×1152 through untouched | 2048px |
 
 ### The largest capacity finding
 
@@ -305,8 +306,9 @@ Stated plainly because they bound what the numbers above mean.
 - **Flat covers fail.** Logos, screenshots and plain walls have no texture to
   hide in. This is a property of the technique, not a bug; the app detects it
   and says so.
-- **Facebook and Twitter geometry is inherited from upstream**, not
-  independently measured.
+- **iMessage geometry is inherited from upstream**, not independently measured.
+  It shares the 1280 profile with Telegram-as-photo, which *is* measured, so it
+  is a reasonable inference rather than a result.
 - All measurement is one Android phone. WhatsApp Web, Android and iOS do not
   compress identically.
 - **Attachments depend on free public hosts.** Blossom servers may drop blobs

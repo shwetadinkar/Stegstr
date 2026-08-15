@@ -109,7 +109,7 @@ Every platform resizes and re-compresses photos differently. Choosing the right 
 | **X/Twitter** | **Large (4096px)** | Keeps your image's own size up to a 4096 long edge | **~25 KB** |
 | **WhatsApp, HD toggle ON** | **Large (4096px)** | Same — an HD send carries 4096×3072 intact | **~25 KB** |
 | WhatsApp, normal send | **Universal** | 1600×1200 — passed through untouched | ~3.9 KB |
-| Facebook | **Facebook HD** | 2048px | ~6.4 KB |
+| Facebook | **Facebook HD** | 2048×1152 — passed through untouched | ~6.4 KB |
 | Telegram, as a photo | **Telegram as photo** | 1280×960 — Telegram re-encodes every photo to this | ~2.5 KB |
 | Telegram, as a file | **Telegram, as file** | No resize — largest capacity of all | biggest |
 | Instagram | **Instagram** | 1440×1440 square — Instagram normalises everything to this | ~3 KB |
