@@ -130,6 +130,29 @@ Content on the relay is encrypted; the key travels in the image. A relay operato
 
 ---
 
+## Attaching files
+
+Notes can carry a file of any type — a document, a video, an archive. The file is **encrypted before it leaves your machine**, and only a reference travels inside the photo, so a small cover image can deliver something arbitrarily large.
+
+The host stores what looks like an ordinary image and learns nothing useful:
+
+| | visible to the host |
+|---|---|
+| File contents | no |
+| File name | no |
+| File type | no |
+| That *something* was uploaded, its size, and by which pubkey | yes |
+
+The name and MIME type are packed *inside* the encrypted data rather than sent alongside it. A host that could read `salary-2026.pdf` would learn most of what matters without ever opening the file.
+
+Attachments are fetched **only when you click**, never in the background — pre-fetching would tell a third-party server you had opened a note. The decryption key is stripped from the note's displayed text.
+
+**Two things to know before relying on it.** Files are stored on free public [Blossom](https://github.com/hzrd149/blossom) servers, which **may drop them over time** — the photo carries only a reference, so a dropped file is gone. And attachments add about 14% to the stored size.
+
+Measured round trips: 1 MB, 5 MB and 10 MB all recovered byte-identical.
+
+---
+
 ## Privacy and control
 
 - **Nothing merges into your feed automatically.** Opening an image shows you exactly what it contained, grouped by author, with signature status. People you follow are pre-selected; strangers are not. Anyone can send you a photo — that must not be enough to write to your feed.
@@ -154,6 +177,12 @@ Platform processing isn't perfectly consistent. If an image comes back unreadabl
 
 **Pointer mode says it can't publish.**
 It needs the network, since your feed goes to a relay. Turn Network on, or untick it to embed everything in the image instead.
+
+**"The attachment is no longer on that server."**
+The file was dropped by the host, which free Blossom servers may do over time. The reference in the image is intact but there is nothing left to fetch. This is deliberately worded differently from a key error — if it says the key is wrong instead, the link or key is at fault, not retention.
+
+**Attaching says it needs an identity, or needs the network.**
+Uploads are signed, so you must be logged in, and they go to a host, so Network must be on. With Network off the app will refuse rather than quietly sending your file.
 
 ---
 

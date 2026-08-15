@@ -1,7 +1,7 @@
 # What this fork changes
 
-Against upstream `brunkstr/Stegstr` at fork point: **55 commits, 208 files,
-+19,133 / −313 lines.** 215 tests, `tsc --noEmit` clean, `npm run build` clean.
+Against upstream `brunkstr/Stegstr` at fork point: **79 commits, 233 files,
++21,311 / −875 lines.** 284 tests, `tsc --noEmit` clean, `npm run build` clean.
 
 The organising claim: **an image only carries hidden data through a chat app if
 the encoder is matched to what that specific app does to photos.** Everything
@@ -146,6 +146,17 @@ advertise.
   feed.
 - **Adult content is filtered from the Global feed** by default, leading with
   authors' own NIP-36 content warnings rather than word matching.
+- **Attachments are encrypted before upload, and work for any file type.**
+  Attaching had been broken outright — every upload was rejected for missing
+  NIP-98 auth, silently, because the compose handler blamed the file type and
+  both profile handlers swallowed the error. Fixing the auth exposed the real
+  problem: the host held your file in the clear, and rejected documents
+  entirely. Files are now encrypted client-side, with the name and MIME type
+  packed *inside* the ciphertext, and carried to a Blossom host as PNG pixel
+  data — because these hosts reject arbitrary binary and return a PNG
+  byte-identical. The host stores an ordinary-looking image and learns neither
+  what the file is nor what it is called. Verified live at 1, 5 and 10 MB, each
+  recovered byte-identical, for +14.4% stored size.
 
 ---
 
@@ -170,6 +181,15 @@ advertise.
   one person". Combined with recipients-only and pointer mode, that is: one
   chosen note, encrypted for one chosen person, hidden in a photo.
 
+  The picker and the automatic packer had drifted apart: packing carried notes
+  from you *or anyone you follow*, while the picker offered only your own. A
+  user who had not posted yet saw the control disabled with "you have not
+  written any notes yet" while their feed sat full of carryable notes. One rule
+  now serves both, with a property test asserting the picker never offers
+  anything the packer would refuse. Picking a followed author's note also
+  carries their profile — their own signed event, unmodified — so the recipient
+  sees a name rather than a bare pubkey.
+
 - **Progress is visible.** The information existed but rendered in a side panel
   out of eyeline, so a multi-second embed read as a hang.
 
@@ -185,9 +205,18 @@ A `@napi-rs/canvas` polyfill (OffscreenCanvas, ImageData, createImageBitmap)
 lets the **real shipped encoder** run under vitest, so embed → channel → detect
 is asserted in CI. That is what caught the delta=14 defect.
 
-**215 tests**, covering the encoder round-trip, the relay pool and outbox,
+**284 tests**, covering the encoder round-trip, the relay pool and outbox,
 NIP-44 against spec vectors, capacity packing, the review flow, the pointer
-tier, and slot ordering.
+tier, slot ordering, encrypted attachments, and the desktop bridge.
+
+Two of those suites exist because of specific blind spots. The desktop app
+cannot be rendered in CI — WebKitGTK cannot initialise GL headlessly — so every
+desktop bug in this project was found by a person clicking after a twenty-minute
+build; `desktop-flow.test.tsx` drives that path with the Tauri bridge mocked,
+covering everything above the IPC boundary, which is where all of them lived.
+And an opt-in live suite (`STEGSTR_LIVE=1`) checks the one thing no offline test
+can: that Blossom hosts still return an uploaded PNG byte-identical. If that
+ever changes, every attachment breaks and it surfaces to users as "wrong key".
 
 Calibration tooling is in `calibration/`: chart generation, quantization-table
 extraction from returned files, payload recovery with self-contained
@@ -241,3 +270,12 @@ Stated plainly because they bound what the numbers above mean.
   independently measured.
 - All measurement is one Android phone. WhatsApp Web, Android and iOS do not
   compress identically.
+- **Attachments depend on free public hosts.** Blossom servers may drop blobs
+  over time, and the image carries only a reference — so a dropped file is
+  unrecoverable. The upload is also visible to the host as *an upload*: it
+  cannot read the file, its name or its type, but it knows a blob of that size
+  arrived from that pubkey at that time.
+- **The desktop app cannot be tested end to end in CI.** WebKitGTK cannot
+  initialise GL headlessly, so anything below the IPC boundary or in the
+  webview's own rendering is verified by hand. Green tests have never caught a
+  desktop bug in this project.
