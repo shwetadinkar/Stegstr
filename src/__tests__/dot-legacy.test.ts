@@ -90,20 +90,43 @@ describe("bracket profiles left the picker but not the decoder", () => {
     // list is the thing to update.
     const { USER_PLATFORMS } = await import("../stego-adaptive");
     expect([...USER_PLATFORMS].sort()).toEqual(
-      ["facebook", "instagram", "instagram_matched", "none",
+      ["facebook", "instagram", "none",
        "telegram_file", "telegram_photo", "universal", "whatsapp_hd"].sort(),
     );
   });
 
-  it("keeps the table-matched profile clearly marked as unverified", async () => {
-    // §15.5: shipping an encoder change certified only by CI is a mistake this
-    // project has already made. The label is the guard.
+  it("Instagram now embeds on Instagram's own quantization table", async () => {
+    /*
+     * §17.12, promoted after three consecutive clean round trips on a real
+     * account -- where the previous delta-56 profile FAILED on the same cover
+     * and payload, and at twice the step size.
+     *
+     * The mechanism: 100% of the embedding band survives a re-encode on
+     * Instagram's own table, against 85.9% on a generic one. So its re-encode
+     * has nothing left to change, exactly as matching its geometry leaves its
+     * resize nothing to do.
+     */
     const { PLATFORM_PROFILES } = await import("../stego-adaptive");
-    expect(PLATFORM_PROFILES.instagram_matched.note).toMatch(/TEST PROFILE/);
-    expect(PLATFORM_PROFILES.instagram_matched.quantTableZigzag).toHaveLength(64);
-    // The plain instagram profile stays untouched and remains the default path.
-    expect(PLATFORM_PROFILES.instagram.quantTableZigzag).toBeUndefined();
-    expect(PLATFORM_PROFILES.instagram.delta).toBe(56);
+    const ig = PLATFORM_PROFILES.instagram;
+    expect(ig.quantTableZigzag).toHaveLength(64);
+    expect(ig.quantTableZigzag![0]).toBe(5);   // Instagram's DC term
+    expect(ig.delta).toBe(28);                  // half the old 56
+    expect(ig.square).toBe(true);
+    expect(ig.width).toBe(1440);
+  });
+
+  it("still decodes images made with the OLD Instagram profile", async () => {
+    // Changing the shipped profile must not strand images already sent. The
+    // old configuration -- 1440 square, delta 56, zigzag 6, rsNsym 32, no
+    // table -- survives in the sweep as instagram_zz6_d56.
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    const legacy = PLATFORM_PROFILES.instagram_zz6_d56;
+    expect(legacy.delta).toBe(56);
+    expect(legacy.width).toBe(1440);
+    expect(legacy.square).toBe(true);
+    expect(legacy.lumaAcCount).toBe(6);
+    expect(legacy.rsNsym).toBe(32);
+    expect(legacy.quantTableZigzag).toBeUndefined();
   });
 });
 

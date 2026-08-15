@@ -12,6 +12,7 @@ Everything below was measured against the real services on a real device, and th
 |---|---|
 | **6.6× the hidden capacity** | X/Twitter and WhatsApp HD keep a 4096px image intact, carrying **~25 KB per photo** against 3.9 KB at 1600px. Verified end to end on a phone. |
 | **Every channel measured** | WhatsApp (normal and HD), Telegram (as photo and as file), Instagram, X/Twitter and Facebook — each confirmed by sending an image through it and reading the payload back. |
+| **Instagram matched at the format level** | The encoder writes JPEG on **Instagram's own quantization table**, extracted from images Instagram returned. Its re-encode then has nothing to change: 100% of the hidden data survives, against 85.9% on a generic table. Three consecutive clean round trips where the previous profile failed — at half the step size, so the photo is visibly cleaner too. |
 | **Encrypted attachments, any file type** | Documents, video, archives. Encrypted before upload; the host stores ciphertext and never learns the filename or the type. 50 MB tested. |
 | **Pointer mode** | A ~260-byte reference in the photo, content encrypted on a relay — for channels too tight for a full payload. |
 | **Built for AI agents** | An MCP server exposing the same encoder the app uses, so an agent can embed and detect directly. |
@@ -134,7 +135,7 @@ Every platform resizes and re-compresses photos differently. Choosing the right 
 | Facebook | **Facebook** | 2048×1152 — passed through untouched | ~6.4 KB |
 | Telegram, as a photo | **Telegram as photo** | 1280×960 — Telegram re-encodes every photo to this | ~2.5 KB |
 | Telegram, as a file | **Telegram, as file** | No resize — largest capacity of all | biggest |
-| Instagram | **Instagram** | 1440×1440 square — Instagram normalises everything to this | ~3 KB |
+| Instagram | **Instagram** | 1440×1440 square, encoded on Instagram's own quantization table | ~3 KB |
 | Not sure / may be forwarded | **Universal** | 1600px, safe on every channel above | ~3.9 KB |
 
 **Large (4096px) carries about six times as much**, and both channels are verified end to end on a real device. It is not the default because getting it wrong is expensive: sent over a *normal* WhatsApp send, a 4096px image is downscaled to 1600 and the hidden data is destroyed completely. Use it when you know the channel; use **Universal** when you don't.

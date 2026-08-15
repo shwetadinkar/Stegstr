@@ -257,9 +257,21 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // the default rather than an experiment. Images made by earlier versions
   // still decode: decodeQimImageFile sweeps chroma and full-band candidates.
   instagram: {
-    width: 1440, square: true, delta: 56, lumaAcCount: 6, rsNsym: 32,
-    note: "1440x1440 square, step 56, lowest 6 AC positions. Instagram sharpens; 28 and 40 did not survive, 56 did. "
-      + "Restricting to low frequencies survives re-encode measurably better and makes the capacity estimate honest.",
+    width: 1440, square: true, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    quantTableZigzag: [
+      5,6,6,11,8,11,11,11,11,11,13,11,11,11,13,14,14,13,13,14,14,15,13,14,14,14,13,
+      15,16,16,16,17,17,16,16,16,16,15,19,18,19,15,16,17,19,20,20,19,17,19,22,22,22,
+      19,22,21,21,22,25,22,25,22,22,18,
+    ],
+    note:
+      "1440 square, step 28, embedded on INSTAGRAM'S OWN quantization table (§17.12) -- " +
+      "extracted from images Instagram returned, byte-identical across all of them. Its " +
+      "re-encode then has nothing to change: 100% of the embedding band survives, against " +
+      "85.9% at a generic table. Verified on a real account, three consecutive clean round " +
+      "trips, where the previous delta-56 profile FAILED on the same cover and payload -- " +
+      "and at half the step size, so the image is visibly cleaner (21% less perturbation). " +
+      "Images made with the old profile still decode: instagram_zz6_d56 carries that exact " +
+      "configuration for the blind sweep.",
   },
   facebook: {
     width: 2048, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
@@ -279,38 +291,6 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
   // Experiment profiles: identical to `instagram` except for step size, so a
   // real-platform bracket can be run from the UI without code changes.
-  /**
-   * §17.12: Instagram's own quantization table, extracted from images it
-   * returned (`calibration/ig_back/*.jpg`, byte-identical across all of them).
-   *
-   * NOT the default, and deliberately so. Instagram currently ships delta 56
-   * and works; §15.5 records that shipping an encoder change certified only by
-   * CI is exactly the mistake this project has already made once. This needs a
-   * phone.
-   *
-   * What is measured: quantizing on Instagram's table leaves 100% of the
-   * embedding band unchanged through a re-encode with that table, against
-   * 85.9% at Q75. End to end against a simulated Instagram re-encode, it
-   * carries reliably at delta 10 where the shipped path needs 14.
-   *
-   * What is NOT measured: the real channel. The simulation re-encodes but does
-   * not sharpen, and §17.13 records sharpening as Instagram's dominant damage.
-   * The gain on a real upload could be larger or could vanish.
-   */
-  instagram_matched: {
-    width: 1440, square: true, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    quantTableZigzag: [
-      5,6,6,11,8,11,11,11,11,11,13,11,11,11,13,14,14,13,13,14,14,15,13,14,14,14,13,
-      15,16,16,16,17,17,16,16,16,16,15,19,18,19,15,16,17,19,20,20,19,17,19,22,22,22,
-      19,22,21,21,22,25,22,25,22,22,18,
-    ],
-    note:
-      "TEST PROFILE (§17.12). Embeds on Instagram's own quantization table, so its " +
-      "re-encode has nothing to change -- 100% of the embedding band survives against " +
-      "85.9% at Q75. Needs a real Instagram round trip before it can replace the " +
-      "default: the simulation does not model sharpening, which §17.13 measured as " +
-      "Instagram's dominant damage.",
-  },
 
   instagram_d44: {
     width: 1440, square: true, delta: 44,
@@ -494,7 +474,6 @@ export const USER_PLATFORMS: readonly string[] = [
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity
   "instagram",       // 1440 square
-  "instagram_matched", // 1440 square on Instagram's own table (§17.12) -- needs a phone
   "facebook",        // 2048, the one distinct larger canvas
   "none",
 ];

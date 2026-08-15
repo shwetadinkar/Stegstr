@@ -97,7 +97,26 @@ describe("measured platform profiles", () => {
       expect(u.width).toBeLessThanOrEqual(PLATFORM_PROFILES[name].width);
     }
     expect(u.square).toBe(false);
-    expect(u.delta).toBeLessThan(PLATFORM_PROFILES.instagram.delta);
+
+    /*
+     * This used to assert `universal.delta < instagram.delta`, on the reasoning
+     * that Instagram demanded a heavier step and universal must not inflict it
+     * on people sending elsewhere. Instagram needed 56 where everything else
+     * needed 28.
+     *
+     * §17.12 removed the reason. Embedding on Instagram's own quantization
+     * table leaves its re-encode nothing to change -- 100% of the band
+     * survives, against 85.9% on a generic table -- so Instagram now carries at
+     * 28 like the rest, verified over three consecutive clean round trips on a
+     * real account.
+     *
+     * What the assertion was protecting still holds, and is stated directly:
+     * universal must not carry a heavier step than the channels it claims.
+     */
+    expect(u.delta).toBeLessThanOrEqual(PLATFORM_PROFILES.instagram.delta);
+    for (const name of ["whatsapp_standard", "twitter", "facebook"]) {
+      expect(`${name}:${u.delta <= PLATFORM_PROFILES[name].delta}`).toBe(`${name}:true`);
+    }
   });
 
   it("telegram_photo matches what Telegram actually outputs", () => {

@@ -32,6 +32,35 @@ block boundaries and reads noise. Every catastrophic failure observed measured
 | Instagram | normalises everything to a 1440 square | 1440×1440 |
 | Facebook | passes 2048×1152 through untouched | 2048px |
 
+### Matching the format, not just the geometry
+
+The rule this fork rests on is that matching a platform's output **geometry**
+leaves its resize nothing to do. The same argument applies one level down: if
+the coefficients are already quantized on the platform's own lattice, its
+re-quantization has nothing to change either.
+
+Instagram's quantization table was extracted from images Instagram itself
+returned, and is byte-identical across all of them. Encoding on it:
+
+```
+generic table (Q75)        embedding band survives   85.9%
+Instagram's own table      embedding band survives  100.0%
+```
+
+On a real account, three consecutive clean round trips — where the previous
+profile **failed** on the same cover and payload, at twice the step size. Half
+the step means 21% less perturbation, so the photo is visibly cleaner as well
+as more reliable.
+
+This needed a JPEG encoder, because `canvas.convertToBlob({quality})` takes a
+quality number and picks its own table. The limitation was previously recorded
+here as needing Rust; it did not — it needed ~400 lines of TypeScript
+(`src/jpeg-encode.ts`, baseline 4:4:4, verified by the platform's own decoder
+reading its output).
+
+Nothing about this is Instagram-specific. Any platform whose table can be
+recovered from a returned file can be matched the same way.
+
 ### The largest capacity finding
 
 WhatsApp HD and X/Twitter both preserve the pixel grid up to a 4096 long edge —
@@ -371,9 +400,10 @@ same traps are easy to fall into again.
 
 Stated plainly because they bound what the numbers above mean.
 
-- **Canvas cannot set quantization tables.** `convertToBlob({quality})` takes a
-  quality number only, so matched-table encoding is not implementable in
-  TypeScript; it needs Rust. Every entrant forking this repo inherits this.
+- **Canvas cannot set quantization tables**, so matched-table encoding cannot go
+  through it. This was recorded here as needing Rust, which was wrong: the app
+  now ships its own baseline JPEG encoder in TypeScript (`src/jpeg-encode.ts`)
+  and matches Instagram's table with it.
 - **Instagram is variable.** Its processing has two distinct modes, and which
   one an upload gets is not a property of the file — byte-identical uploads
   went through both. A failed upload usually succeeds on retry.
