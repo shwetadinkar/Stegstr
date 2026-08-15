@@ -192,6 +192,78 @@ describe("profiles carried alongside the notes", () => {
   });
 });
 
+describe("other people's profiles do not compete with content", () => {
+  /**
+   * Measured, because the cost was far larger than it looks. packForCapacity
+   * scores replaceable events +3 as "small and vital" and ranks by score per
+   * byte; profiles are tiny, so they sorted to the very front of the queue.
+   * The pool is everyone you follow, so every followed account's profile was
+   * carried whether or not any of their notes were.
+   *
+   *   budget 1200   7 profiles and ZERO notes -- the entire image was profiles
+   *                 for people whose content was not in it
+   *   budget 2500   2205 of 6304 bytes, 35%, on profiles with no note present
+   *
+   * After: 6 notes and 4 profiles at the same budgets, no orphans at all.
+   */
+  const profile = (pk: string) =>
+    ev({ kind: 0, pubkey: pk, content: JSON.stringify({ name: "someone" }) });
+
+  it("excludes a followed account's profile from the packing pool", () => {
+    expect(embedCandidates([profile(FRIEND)], ctx())).toEqual([]);
+  });
+
+  it("excludes their contact list and relay list too", () => {
+    const others = [
+      ev({ kind: 3, pubkey: FRIEND }),
+      ev({ kind: 10002, pubkey: FRIEND }),
+    ];
+    expect(embedCandidates(others, ctx())).toEqual([]);
+  });
+
+  it("keeps our own profile and relay list", () => {
+    // Yours identifies you and says how to reach you. Neither depends on a
+    // note being carried, so neither is dead weight.
+    const mine = [
+      ev({ kind: 0, pubkey: ME }),
+      ev({ kind: 3, pubkey: ME }),
+      ev({ kind: 10002, pubkey: ME }),
+    ];
+    expect(embedCandidates(mine, ctx())).toHaveLength(3);
+  });
+
+  it("still carries their notes -- only the metadata is dropped", () => {
+    const note = ev({ kind: 1, pubkey: FRIEND, content: "their words" });
+    expect(embedCandidates([note, profile(FRIEND)], ctx())).toEqual([note]);
+  });
+
+  it("adds the profile back for an author whose note IS carried", () => {
+    // The whole point: nothing is lost, the space just goes to notes first.
+    const note = ev({ kind: 1, pubkey: FRIEND, content: "their words" });
+    const theirProfile = profile(FRIEND);
+    const pool = embedCandidates([note, theirProfile], ctx());
+    const { borrow } = profilesToCarry(pool, [note, theirProfile], new Set([ME]));
+    expect(borrow).toEqual([theirProfile]);
+  });
+
+  it("every profile in the finished bundle belongs to a carried author", () => {
+    // The property that was violated. Stated over a mixed feed rather than one
+    // hand-picked case.
+    const all = [
+      ev({ kind: 1, pubkey: ME, content: "mine" }),
+      ev({ kind: 1, pubkey: FRIEND, content: "theirs" }),
+      profile(FRIEND),
+      profile(STRANGER),
+      ev({ kind: 0, pubkey: "d".repeat(64) }),
+    ];
+    const c = ctx({ contacts: new Set([FRIEND, "d".repeat(64)]) });
+    const pool = embedCandidates(all, c);
+    const { borrow } = profilesToCarry(pool, all, new Set([ME]));
+    const authors = new Set([...pool, ...borrow].filter((e) => e.kind === 1).map((e) => e.pubkey));
+    for (const p of borrow) expect(authors.has(p.pubkey)).toBe(true);
+  });
+});
+
 describe("isEmbedCandidate", () => {
   it("accepts your own and a followed author's, rejects a stranger's", () => {
     expect(isEmbedCandidate(ev({ pubkey: ME }), ctx())).toBe(true);

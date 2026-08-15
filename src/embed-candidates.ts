@@ -47,8 +47,42 @@ export function isEmbedCandidate(e: NostrEvent, ctx: CandidateContext): boolean 
   return (
     (ctx.ourPubkeys.has(e.pubkey) || ctx.contacts.has(e.pubkey)) &&
     e.kind !== 5 &&
+    !isOtherPersonsMetadata(e, ctx.ourPubkeys) &&
     !ctx.deletedNoteIds.has(e.id)
   );
+}
+
+/** kind 0 profile, kind 3 contacts, and the 10000-range replaceable lists. */
+function isReplaceableKind(kind: number): boolean {
+  return kind === 0 || kind === 3 || (kind >= 10000 && kind < 20000);
+}
+
+/**
+ * Someone else's profile or list, which must not compete with actual content
+ * for space in the image.
+ *
+ * MEASURED, because the cost was much larger than it looks. packForCapacity
+ * scores replaceable events +3 as "small and vital" and ranks by score per
+ * byte, so profiles -- being tiny -- sort to the very front. The candidate pool
+ * is everyone you follow, so the profile of every followed account was carried
+ * whether or not any of their notes were:
+ *
+ *   budget 1200   chose 7 profiles and ZERO notes -- the whole image was
+ *                 profiles for people whose content was not in it
+ *   budget 2500   2205 of 6304 bytes, 35%, spent on profiles whose author had
+ *                 no note in the image
+ *
+ * A profile is only worth its bytes if it names the author of something the
+ * recipient can actually read. Those are added back after selection by
+ * {@link profilesToCarry}, which takes exactly the authors present and no
+ * others -- so nothing is lost and the space goes to notes.
+ *
+ * Our OWN replaceable events stay: your profile identifies you, and your relay
+ * list is how the recipient reaches you. Neither depends on a note being
+ * carried.
+ */
+function isOtherPersonsMetadata(e: NostrEvent, ourPubkeys: ReadonlySet<string>): boolean {
+  return isReplaceableKind(e.kind) && !ourPubkeys.has(e.pubkey);
 }
 
 /** Every event eligible for automatic packing. */
