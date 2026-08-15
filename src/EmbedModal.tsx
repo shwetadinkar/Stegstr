@@ -75,8 +75,6 @@ export interface EmbedModalProps {
   onPointerModeChange: (on: boolean) => void;
   /** Pointer mode publishes to a relay, so it cannot work with this off. */
   networkEnabled: boolean;
-  slotOrder: "profile" | "ac-major" | "spread";
-  onSlotOrderChange: (order: "profile" | "ac-major" | "spread") => void;
   /**
    * Recent notes offered for explicit selection, newest first: the user's own
    * and those of people they follow, which is exactly what automatic packing
@@ -108,24 +106,28 @@ export function EmbedModal({
   pointerMode,
   onPointerModeChange,
   networkEnabled,
-  slotOrder,
-  onSlotOrderChange,
   selectableNotes,
   selectedNoteIds,
   onSelectedNoteIdsChange,
 }: EmbedModalProps) {
   const [capacityInfo, setCapacityInfo] = useState<string>("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
   // Bracket/experiment profiles are hidden by default -- there are 13 of them
   // against 9 real targets, which buried the platforms anyone actually wants.
   // The currently selected one always stays listed, so a selection made with
   // the toggle on does not silently vanish when it is turned off.
-  const [showTestProfiles, setShowTestProfiles] = useState(false);
+  // Shipping platforms only. The bracket profiles (instagram_d40..d72,
+  // instagram_chroma_*, instagram_zz6_*) remain in PLATFORM_PROFILES so the
+  // blind decode still opens images made with them, but they are not offered:
+  // they exist to answer questions on a real device that are now answered, and
+  // an unlucky pick would produce a worse image for no reason.
+  //
+  // targetPlatform is included even if it is not a shipping key, so a stored
+  // preference from an older build still displays instead of showing blank.
   const platformKeys = [
     ...USER_PLATFORMS.filter((k) => k in PLATFORM_PROFILES),
-    ...Object.keys(PLATFORM_PROFILES).filter(
-      (k) => !USER_PLATFORMS.includes(k) && (showTestProfiles || k === targetPlatform),
-    ),
+    ...(USER_PLATFORMS.includes(targetPlatform) || !(targetPlatform in PLATFORM_PROFILES)
+      ? []
+      : [targetPlatform]),
   ];
 
   useEffect(() => {
@@ -234,14 +236,6 @@ export function EmbedModal({
                 <option key={key} value={key}>{PLATFORM_LABELS[key] ?? key}</option>
               ))}
             </select>
-            <label style={{ display: "block", marginTop: "0.4rem", fontSize: "0.8rem", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={showTestProfiles}
-                onChange={(e) => setShowTestProfiles(e.target.checked)}
-              />
-              {" "}Show experimental test profiles (for bracket testing)
-            </label>
             <Note label="About this platform target">
               {(() => {
                 const prof = profileFor(targetPlatform);
@@ -438,55 +432,21 @@ export function EmbedModal({
           </div>
         )}
 
-        {/* Advanced options toggle */}
-        <button
-          type="button"
-          className="btn-link muted"
-          style={{ fontSize: "0.85rem", padding: 0, border: "none", background: "none", cursor: "pointer", textDecoration: "underline" }}
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
-          {showAdvanced ? "Hide advanced options" : "Advanced options"}
-        </button>
+        {/* "Advanced options" and everything under it are gone.
+            It held one control -- slot ordering -- which was itself hidden
+            behind a test-profile toggle, so by default the disclosure opened
+            an empty box.
 
-        {showAdvanced && (
-          <div className="embed-advanced" style={{ margin: "0.5rem 0", padding: "0.5rem", border: "1px solid #ddd", borderRadius: "4px" }}>
-            {/* Slot ordering (§17.4) -- an A/B control, not a setting anyone
-                should need. Present so the same cover and payload can be shot
-                both ways through a real platform and judged by eye, because CI
-                cannot answer which looks better. Decode is unaffected: the
-                blind sweep tries both orderings regardless, so an image made
-                either way still reads. */}
-            {showTestProfiles && (
-              <div className="embed-slot-order" style={{ marginTop: "0.5rem" }}>
-                <label className="embed-section-label">Slot ordering (comparison):</label>
-                <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-                  {([
-                    ["profile", "Profile default"],
-                    ["ac-major", "AC-major (fills top-down)"],
-                    ["spread", "Spread (scattered)"],
-                  ] as const).map(([value, label]) => (
-                    <label key={value} style={{ cursor: "pointer" }}>
-                      <input
-                        type="radio"
-                        name="slot-order"
-                        checked={slotOrder === value}
-                        onChange={() => onSlotOrderChange(value)}
-                      />
-                      {" "}{label}
-                    </label>
-                  ))}
-                </div>
-                <Note label="What slot ordering does">
-                  AC-major writes one frequency from the top down, so a small payload
-                  forms a band across the upper part of the frame. Spread scatters the
-                  same bits over every frequency and the whole image. The filename
-                  records which was used.
-                </Note>
-              </div>
-            )}
+            Slot ordering and the bracket profiles were A/B controls for
+            answering questions on a real device: which delta survives
+            Instagram, whether "spread" beat "ac-major". Both are answered.
+            §17.6 measured spread as buying nothing (47.9% vs 49.1% of the
+            decision margin, both destroyed in Instagram's heavy pipeline), and
+            ac-major ships everywhere. The step-size brackets settled on 56.
 
-          </div>
-        )}
+            The profiles stay in PLATFORM_PROFILES because the blind decode
+            sweeps them, so images already made with a bracket profile still
+            open. They are simply not offered. */}
 
         {/* Progress indicator */}
         {embedding && (

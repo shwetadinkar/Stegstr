@@ -62,6 +62,34 @@ describe("images made with the removed Dot encoder still decode", () => {
   });
 });
 
+describe("bracket profiles left the picker but not the decoder", () => {
+  it("still holds every experimental profile for blind decode", async () => {
+    // Real images exist that were made with these -- the Instagram step-size
+    // and chroma brackets were shot through a phone. Dropping them from
+    // PLATFORM_PROFILES would make those images unreadable, which is why only
+    // the PICKER was narrowed.
+    const { PLATFORM_PROFILES, USER_PLATFORMS } = await import("../stego-adaptive");
+    for (const name of [
+      "instagram_d40", "instagram_d44", "instagram_d48", "instagram_d52",
+      "instagram_d56", "instagram_d72",
+      "instagram_chroma_d28", "instagram_chroma_d40", "instagram_chroma_d56",
+      "instagram_zz6_d20", "instagram_zz6_d28", "instagram_zz6_d40", "instagram_zz6_d56",
+      "whatsapp_standard", "twitter", "imessage", "telegram_photo_1600",
+    ]) {
+      expect(`${name}:${name in PLATFORM_PROFILES}`).toBe(`${name}:true`);
+      // ...and is deliberately NOT offered in the dialog.
+      expect(`${name}:offered=${USER_PLATFORMS.includes(name)}`).toBe(`${name}:offered=false`);
+    }
+  });
+
+  it("offers only the shipping platforms", async () => {
+    const { USER_PLATFORMS } = await import("../stego-adaptive");
+    expect([...USER_PLATFORMS].sort()).toEqual(
+      ["facebook", "instagram", "none", "telegram_file", "telegram_photo", "universal", "whatsapp_hd"].sort(),
+    );
+  });
+});
+
 describe("the embed side is QIM only", () => {
   it("offers no encoding-method choice in the dialog", async () => {
     // The radio is gone. If a props-level method switch ever comes back, this

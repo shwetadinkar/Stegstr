@@ -342,11 +342,13 @@ function App({ profile }: { profile: string | null }) {
   // nothing -- and now that 4096 carries ~25KB it holds most feeds outright,
   // so the case for defaulting to a pointer is much weaker than it was.
   const [embedPointerMode, setEmbedPointerMode] = useState(false);
-  // Slot-ordering override for A/B comparison (§17.4). "profile" uses whatever
-  // the platform profile declares; the other two force one ordering so the same
-  // cover and payload can be shot both ways and judged by eye. Decode is
-  // unaffected -- the blind sweep tries both orderings regardless.
-  const [embedSlotOrder, setEmbedSlotOrder] = useState<"profile" | "ac-major" | "spread">("profile");
+  // Slot ordering follows the platform profile. The A/B override (§17.4) is no
+  // longer exposed: §17.6 measured "spread" as buying nothing over "ac-major"
+  // -- 47.9% against 49.1% of the decision margin through Instagram's light
+  // pipeline, both destroyed in its heavy one -- and ac-major has passes on all
+  // four channels. The option survives in QimOptions for experiments; decode is
+  // unaffected either way, since the blind sweep tries both orderings.
+  const embedSlotOrder: "profile" | "ac-major" | "spread" = "profile";
   // null = carry the feed and let packForCapacity choose. A list = carry
   // exactly these notes. "Back up my feed" and "send this one message to this
   // one person" are different jobs and only the first was possible before.
@@ -3548,8 +3550,6 @@ function App({ profile }: { profile: string | null }) {
               addStegoLog("Network turned on automatically: pointer mode publishes to a relay.");
             }
           }}
-          slotOrder={embedSlotOrder}
-          onSlotOrderChange={setEmbedSlotOrder}
           selectableNotes={selectableNotes(events, candidateCtx)}
           selectedNoteIds={embedNoteIds}
           onSelectedNoteIdsChange={setEmbedNoteIds}
