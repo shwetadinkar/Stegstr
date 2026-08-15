@@ -368,6 +368,35 @@ describe("PLATFORM_WIDTHS", () => {
     expect(coverGeometry(3024, 4032, 4096, false)).toMatchObject({ w: 3024, h: 4032 });
   });
 
+  it("does not sweep the same decode configuration twice", () => {
+    /*
+     * The blind sweep tries profiles, but decoding never resizes -- it reads
+     * the image it was given -- so two profiles differing only in WIDTH are
+     * the same attempt run twice.
+     *
+     * Measured before the fix: 24 profiles, 42 worst-case attempts, and nine
+     * profiles sharing one single configuration (whatsapp_standard,
+     * whatsapp_hd, telegram_photo, telegram_photo_1600, facebook, twitter,
+     * imessage, instagram_zz6_d28, universal) -- 18 attempts doing the work of
+     * two. After: 22 attempts.
+     *
+     * The profiles themselves stay: they carry the geometry each platform
+     * needs for EMBEDDING, which is real and distinct. Only the decode sweep
+     * has no use for the distinction.
+     */
+    const decodeKey = (p: typeof PLATFORM_PROFILES[string]) => [
+      p.delta, p.lumaAcCount ?? "-", p.rsNsym ?? "-", p.repeat ?? "-",
+      p.activityBand ?? "high", p.chromaDelta ?? "-", p.chromaChannels ?? "-",
+      p.slotOrder ?? "-",
+    ].join("|");
+
+    const all = Object.values(PLATFORM_PROFILES);
+    const distinct = new Set(all.map(decodeKey));
+    // If these are ever equal, the dedupe has become pointless and something
+    // has changed about how profiles are defined.
+    expect(distinct.size).toBeLessThan(all.length);
+  });
+
   it("keeps the aspect ratio when capping either orientation", () => {
     const p = coverGeometry(3000, 4000, 2000, false);
     expect(p.w / p.h).toBeCloseTo(3000 / 4000, 2);

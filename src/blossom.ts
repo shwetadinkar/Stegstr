@@ -26,6 +26,9 @@
  * inside an image, addressed by something small. Here the "something small" is
  * a URL and a key, which travel in the note that the stego image carries.
  *
+ * SIZE. Verified byte-identical at 1, 5 and 10 MB; a 50 MB zip has been
+ * uploaded and posted successfully. The ceiling is the server's, not ours.
+ *
  * WHAT IT DOES NOT HIDE. The host knows an image of a certain size was uploaded
  * by a given pubkey at a given time, and can see it is high-entropy noise
  * rather than a photograph. It cannot read the contents. Fetching it is

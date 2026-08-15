@@ -152,7 +152,7 @@ Attachments are fetched **only when you click**, never in the background — pre
 
 **Two things to know before relying on it.** Files are stored on free public [Blossom](https://github.com/hzrd149/blossom) servers, which **may drop them over time** — the photo carries only a reference, so a dropped file is gone. And attachments add about 14% to the stored size.
 
-Measured round trips: 1 MB, 5 MB and 10 MB all recovered byte-identical.
+Measured round trips: 1 MB, 5 MB and 10 MB recovered byte-identical, and a 50 MB zip uploaded and posted successfully.
 
 ---
 

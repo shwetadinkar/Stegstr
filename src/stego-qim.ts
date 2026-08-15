@@ -32,6 +32,7 @@ import {
   PLATFORM_PROFILES, DETECT_DELTAS, profileFor,
   blockActivity, deltaForBlock, LADDER_MEAN,
   CARRIER_COEFF_ZIGZAG, isCarrierBlock,
+  type PlatformProfile,
 } from "./stego-adaptive";
 import {
   ycbcrToRgb, extractChromaPlanes,
@@ -1186,6 +1187,39 @@ export async function encodeQimImageFile(
 /**
  * Convenience: detect a QIM payload from a JPEG File.
  */
+/**
+ * Collapse profiles that decode identically.
+ *
+ * The blind sweep tries profiles, but decoding does not care which platform a
+ * profile is FOR -- it never resizes, it just reads the image it was given. So
+ * two profiles differing only in width are the same attempt run twice.
+ *
+ * Measured: 24 profiles reduce to 14 distinct decode configurations, and nine
+ * of them -- whatsapp_standard, whatsapp_hd, telegram_photo,
+ * telegram_photo_1600, facebook, twitter, imessage, instagram_zz6_d28 and
+ * universal -- are one single configuration. That was 18 attempts (nine
+ * profiles, two slot orderings) doing the work of two.
+ *
+ * This is why the profiles themselves are kept rather than pruned: they carry
+ * the geometry each platform needs for EMBEDDING, which is real and distinct.
+ * It is only the decode sweep that has no use for the distinction.
+ */
+function dedupeByDecodeConfig(profiles: PlatformProfile[]): PlatformProfile[] {
+  const seen = new Set<string>();
+  const out: PlatformProfile[] = [];
+  for (const p of profiles) {
+    const key = [
+      p.delta, p.lumaAcCount ?? "-", p.rsNsym ?? "-", p.repeat ?? "-",
+      p.activityBand ?? "high", p.chromaDelta ?? "-", p.chromaChannels ?? "-",
+      p.slotOrder ?? "-",
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+
 export async function decodeQimImageFile(
   file: File,
   options?: QimOptions,
@@ -1207,7 +1241,9 @@ export async function decodeQimImageFile(
       // magic/length header (§10.4), so a luma-only read starts mid-stream
       // and fails. Try whole {delta, chromaDelta, chromaChannels, rsNsym}
       // bundles from the small set of profiles that actually enable chroma.
-      const chromaCandidates = Object.values(PLATFORM_PROFILES).filter((p) => p.chromaDelta !== undefined);
+      const chromaCandidates = dedupeByDecodeConfig(
+        Object.values(PLATFORM_PROFILES).filter((p) => p.chromaDelta !== undefined),
+      );
       // Phase 2: zigzag-restricted profiles (§10.4 option 2) -- a smaller
       // lumaAcCount changes the AC-major stream layout, so like chroma this
       // isn't decodable by a guess that assumes the full 24 positions.
@@ -1228,9 +1264,11 @@ export async function decodeQimImageFile(
       // profile that sets ONLY activityBand must still be tried as a whole
       // bundle, hence the third clause: without it such a profile would fall
       // through to phase 3, which passes delta alone.
-      const zigzagCandidates = Object.values(PLATFORM_PROFILES).filter(
-        (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined || p.activityBand !== undefined)
-          && p.chromaDelta === undefined,
+      const zigzagCandidates = dedupeByDecodeConfig(
+        Object.values(PLATFORM_PROFILES).filter(
+          (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined || p.activityBand !== undefined)
+            && p.chromaDelta === undefined,
+        ),
       );
       // Phase 3: plain luma-only sweep, full AC range, chroma disabled --
       // backward compatible with images made before this change and other

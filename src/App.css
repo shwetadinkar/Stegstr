@@ -416,8 +416,20 @@ button.link-like:hover { text-decoration: underline; }
 .note-time { font-size: 0.8rem; color: #666; }
 .note-content p { margin: 0 0 0.5rem; white-space: pre-wrap; word-break: break-word; }
 .note-images { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
-.note-img { max-width: 100%; max-height: 300px; border-radius: 8px; object-fit: cover; }
-.note-video { max-height: 360px; object-fit: contain; }
+/* Reserve the box BEFORE the image loads.
+   These were max-height only, so every lazy-loaded image expanded from zero
+   height and shoved everything below it down the page. On the Global feed,
+   where images arrive continuously while you read, that is most of what made
+   the page feel unstable. A fixed thumbnail box cannot shift. */
+.note-img {
+  width: 320px;
+  max-width: 100%;
+  height: 240px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #eee;
+}
+.note-video { width: 420px; max-width: 100%; height: 260px; object-fit: contain; background: #000; border-radius: 8px; }
 .note-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1056,9 +1068,25 @@ textarea { resize: vertical; min-height: 60px; }
 .embed-note-pick span { overflow-wrap: anywhere; }
 
 /* The outcome of an attach, next to the button that caused it. */
+.feed-new-pill {
+  display: block;
+  width: 100%;
+  margin: 0 0 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid #111;
+  background: #111;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.feed-new-pill:hover { background: #333; border-color: #333; }
+
 .feed-select-actions { display: flex; gap: 0.4rem; align-items: center; margin-right: auto; }
-.note-select { display: flex; align-items: flex-start; padding-top: 0.15rem; margin-right: 0.5rem; }
-.note-select input { cursor: pointer; }
+.note-select { display: flex; align-items: flex-start; padding-top: 0.1rem; margin-right: 0.6rem; }
+/* 1.5x the browser default: this is a hit target people aim at repeatedly
+   while clearing a feed, and the default is sized for incidental use. */
+.note-select input { cursor: pointer; width: 1.5em; height: 1.5em; accent-color: #111; }
 
 .stego-drop-zone-clickable { cursor: pointer; }
 .stego-drop-zone-clickable:hover { border-color: #111; background: #fafafa; }

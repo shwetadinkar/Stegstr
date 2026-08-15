@@ -327,11 +327,12 @@ function App({ profile }: { profile: string | null }) {
   // (§10.4). Off by default: self-contained is the property that makes an
   // image worth sending in the first place, and pointer mode trades it away
   // for quietness. The user opts in when the channel is tight.
-  // Default ON. A ~260-byte pointer survives every channel regardless of cover
-  // size, where a self-contained bundle is bounded by the photo. The cost is
-  // real and stated in the dialog: it needs the network, the recipient must be
-  // online, and their relay request is observable.
-  const [embedPointerMode, setEmbedPointerMode] = useState(true);
+  // Default OFF, deliberately. A pointer image is not self-contained: it needs
+  // a live relay, the recipient must be online, and their relay request is
+  // observable. A self-contained image works offline, forever, and leaks
+  // nothing -- and now that 4096 carries ~25KB it holds most feeds outright,
+  // so the case for defaulting to a pointer is much weaker than it was.
+  const [embedPointerMode, setEmbedPointerMode] = useState(false);
   // Slot-ordering override for A/B comparison (§17.4). "profile" uses whatever
   // the platform profile declares; the other two force one ordering so the same
   // cover and payload can be shot both ways and judged by eye. Decode is
@@ -2443,6 +2444,21 @@ function App({ profile }: { profile: string | null }) {
     [selfPubkeys, profiles, toast],
   );
 
+  /**
+   * Your own notes currently on screen, which is what "Select all" means.
+   *
+   * Deliberately the visible feed rather than every note you have ever
+   * written: "select all" selecting things the user cannot see, then deleting
+   * them, is not a risk worth taking for a convenience.
+   */
+  const ownVisibleNoteIds = useMemo(
+    () => feedItems
+      .map((item) => (item.type === "note" ? item.note : item.note))
+      .filter((n) => n.kind === 1 && selfPubkeys.includes(n.pubkey))
+      .map((n) => n.id),
+    [feedItems, selfPubkeys],
+  );
+
   const toggleNoteSelected = useCallback((note: NostrEvent) => {
     setSelectedNoteIdsForDelete((prev) => {
       const next = new Set(prev);
@@ -3069,6 +3085,9 @@ function App({ profile }: { profile: string | null }) {
               uploadingMedia={uploadingMedia}
               selectMode={selectMode}
               selectedCount={selectedNoteIdsForDelete.size}
+              selectableCount={ownVisibleNoteIds.length}
+              onSelectAll={() => setSelectedNoteIdsForDelete(new Set(ownVisibleNoteIds))}
+              onSelectNone={() => setSelectedNoteIdsForDelete(new Set())}
               onToggleSelectMode={() => {
                 setSelectMode((on) => !on);
                 setSelectedNoteIdsForDelete(new Set());

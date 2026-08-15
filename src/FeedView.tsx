@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 import type React from "react";
 import { NoteThread } from "./NoteCard";
 import type { NoteCardActions, NoteCardState } from "./NoteCard";
@@ -26,7 +27,11 @@ export interface FeedViewProps {
   /** Bulk selection for deleting several of your own notes at once. */
   selectMode: boolean;
   selectedCount: number;
+  /** Your own notes currently on screen — what "Select all" covers. */
+  selectableCount: number;
   onToggleSelectMode: () => void;
+  onSelectAll: () => void;
+  onSelectNone: () => void;
   onDeleteSelected: () => void;
   attachNotice: { text: string; kind: "ok" | "error" } | null;
   onDismissAttachNotice: () => void;
@@ -72,7 +77,8 @@ export interface FeedViewProps {
 
 export function FeedView({
   myPicture, myName, newPost, setNewPost, postAttachments, setPostAttachments,
-  uploadingMedia, selectMode, selectedCount, onToggleSelectMode, onDeleteSelected,
+  uploadingMedia, selectMode, selectedCount, selectableCount,
+  onToggleSelectMode, onSelectAll, onSelectNone, onDeleteSelected,
   attachNotice, onDismissAttachNotice, postMediaInputRef, handlePostMediaUpload, handlePost,
   feedFilter, setFeedFilter,
   hideSensitive, setHideSensitive,
@@ -85,6 +91,50 @@ export function FeedView({
   loadingMore, loadMoreSentinelRef,
   setViewingProfilePubkey, setView,
 }: FeedViewProps) {
+
+  /**
+   * Hold new notes back while the reader is scrolled down.
+   *
+   * The Global feed prepends as events stream in from relays, so the list grew
+   * above whatever the user was reading and pushed it off the screen -- which
+   * is what "the page is shaky" meant. New items are now buffered and offered,
+   * rather than inserted underneath the reader.
+   *
+   * Removals are applied immediately: a note that was deleted or muted should
+   * disappear whatever the scroll position, and holding it back would mean
+   * showing content the user has just told us to hide.
+   */
+  const itemKey = (i: FeedItem) => (i.type === "repost" ? i.repost.id : i.note.id);
+  const [shownItems, setShownItems] = useState<FeedItem[]>(feedItems);
+  const atTopRef = useRef(true);
+
+  useEffect(() => {
+    const onScroll = () => { atTopRef.current = window.scrollY < 120; };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Keyed on content, not array identity: feedItems is rebuilt every render,
+  // so depending on the array itself would re-run this forever.
+  const feedSignature = feedItems.map(itemKey).join(",");
+  useEffect(() => {
+    const live = new Map(feedItems.map((i) => [itemKey(i), i]));
+    setShownItems((prev) => {
+      if (atTopRef.current) return feedItems;
+      const kept = prev.filter((i) => live.has(itemKey(i))).map((i) => live.get(itemKey(i))!);
+      return kept.length === prev.length ? prev : kept;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedSignature]);
+
+  const shownKeys = new Set(shownItems.map(itemKey));
+  const pendingCount = feedItems.filter((i) => !shownKeys.has(itemKey(i))).length;
+  const showPending = () => {
+    setShownItems(feedItems);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return (
     <>
       <section className="compose-section">
@@ -160,6 +210,15 @@ export function FeedView({
               withdraw anyone else's from the network, and offering it would be
               a lie about what the app can do. */}
           <div className="feed-select-actions">
+            {selectMode && selectableCount > 0 && (
+              <button
+                type="button"
+                className="btn-small"
+                onClick={selectedCount >= selectableCount ? onSelectNone : onSelectAll}
+              >
+                {selectedCount >= selectableCount ? "Select none" : `Select all (${selectableCount})`}
+              </button>
+            )}
             {selectMode && (
               <button
                 type="button"
@@ -179,6 +238,11 @@ export function FeedView({
             <button type="button" className={feedFilter === "following" ? "active" : ""} onClick={() => setFeedFilter("following")}>Following</button>
           </div>
         </div>
+        {pendingCount > 0 && (
+          <button type="button" className="feed-new-pill" onClick={showPending}>
+            {pendingCount} new {pendingCount === 1 ? "note" : "notes"} — show
+          </button>
+        )}
         {/* Only shown on Global: Following is a list the user curated, so
             filtering it would hide people they deliberately chose. */}
         {feedFilter === "global" && (
@@ -265,8 +329,8 @@ export function FeedView({
                 })()
               : null;
             const feedItemsSorted: FeedItem[] = !rootIdForFocus
-              ? feedItems
-              : [...feedItems].sort((a, b) => {
+              ? shownItems
+              : [...shownItems].sort((a, b) => {
                   const aId = a.type === "note" ? a.note.id : a.note.id;
                   const bId = b.type === "note" ? b.note.id : b.note.id;
                   if (aId === rootIdForFocus) return -1;
