@@ -81,6 +81,15 @@ export interface PlatformProfile {
   /** Human-readable note shown in the UI. */
   note: string;
   /**
+   * Quantization table to embed on and encode with (§17.12), zigzag order.
+   *
+   * When set, the output is written by our own JPEG encoder on exactly this
+   * lattice rather than through Canvas, which picks its own table. The point
+   * is to give the destination's re-encode nothing to change -- the same
+   * argument as matching its geometry, one level down.
+   */
+  quantTableZigzag?: readonly number[];
+  /**
    * QIM step size for chroma-channel embedding (§10.4). Undefined means
    * chroma embedding is off for this profile -- luma-only, unchanged
    * behaviour. Chroma bits are invisible at a much smaller step than luma
@@ -270,6 +279,39 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
   // Experiment profiles: identical to `instagram` except for step size, so a
   // real-platform bracket can be run from the UI without code changes.
+  /**
+   * §17.12: Instagram's own quantization table, extracted from images it
+   * returned (`calibration/ig_back/*.jpg`, byte-identical across all of them).
+   *
+   * NOT the default, and deliberately so. Instagram currently ships delta 56
+   * and works; §15.5 records that shipping an encoder change certified only by
+   * CI is exactly the mistake this project has already made once. This needs a
+   * phone.
+   *
+   * What is measured: quantizing on Instagram's table leaves 100% of the
+   * embedding band unchanged through a re-encode with that table, against
+   * 85.9% at Q75. End to end against a simulated Instagram re-encode, it
+   * carries reliably at delta 10 where the shipped path needs 14.
+   *
+   * What is NOT measured: the real channel. The simulation re-encodes but does
+   * not sharpen, and §17.13 records sharpening as Instagram's dominant damage.
+   * The gain on a real upload could be larger or could vanish.
+   */
+  instagram_matched: {
+    width: 1440, square: true, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    quantTableZigzag: [
+      5,6,6,11,8,11,11,11,11,11,13,11,11,11,13,14,14,13,13,14,14,15,13,14,14,14,13,
+      15,16,16,16,17,17,16,16,16,16,15,19,18,19,15,16,17,19,20,20,19,17,19,22,22,22,
+      19,22,21,21,22,25,22,25,22,22,18,
+    ],
+    note:
+      "TEST PROFILE (§17.12). Embeds on Instagram's own quantization table, so its " +
+      "re-encode has nothing to change -- 100% of the embedding band survives against " +
+      "85.9% at Q75. Needs a real Instagram round trip before it can replace the " +
+      "default: the simulation does not model sharpening, which §17.13 measured as " +
+      "Instagram's dominant damage.",
+  },
+
   instagram_d44: {
     width: 1440, square: true, delta: 44,
     note: "Bracketing: threshold lies in (40, 56].",
@@ -452,6 +494,7 @@ export const USER_PLATFORMS: readonly string[] = [
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity
   "instagram",       // 1440 square
+  "instagram_matched", // 1440 square on Instagram's own table (§17.12) -- needs a phone
   "facebook",        // 2048, the one distinct larger canvas
   "none",
 ];

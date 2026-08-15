@@ -82,11 +82,28 @@ describe("bracket profiles left the picker but not the decoder", () => {
     }
   });
 
-  it("offers only the shipping platforms", async () => {
+  it("offers only the shipping platforms, plus the one test profile", async () => {
+    // instagram_matched is offered deliberately (§17.12): it embeds on
+    // Instagram's own quantization table and CANNOT be validated without a
+    // real Instagram round trip, so it has to be selectable to be tested. Its
+    // label says TEST. If it is ever promoted to the default, or dropped, this
+    // list is the thing to update.
     const { USER_PLATFORMS } = await import("../stego-adaptive");
     expect([...USER_PLATFORMS].sort()).toEqual(
-      ["facebook", "instagram", "none", "telegram_file", "telegram_photo", "universal", "whatsapp_hd"].sort(),
+      ["facebook", "instagram", "instagram_matched", "none",
+       "telegram_file", "telegram_photo", "universal", "whatsapp_hd"].sort(),
     );
+  });
+
+  it("keeps the table-matched profile clearly marked as unverified", async () => {
+    // §15.5: shipping an encoder change certified only by CI is a mistake this
+    // project has already made. The label is the guard.
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    expect(PLATFORM_PROFILES.instagram_matched.note).toMatch(/TEST PROFILE/);
+    expect(PLATFORM_PROFILES.instagram_matched.quantTableZigzag).toHaveLength(64);
+    // The plain instagram profile stays untouched and remains the default path.
+    expect(PLATFORM_PROFILES.instagram.quantTableZigzag).toBeUndefined();
+    expect(PLATFORM_PROFILES.instagram.delta).toBe(56);
   });
 });
 

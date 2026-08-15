@@ -28,6 +28,7 @@ import { RSCodec } from "./reed-solomon";
 // Constants (matching Python dct_variants.py)
 // ---------------------------------------------------------------------------
 
+import { encodeJpegWithTable, zigzagToRaster } from "./jpeg-encode";
 import {
   PLATFORM_PROFILES, DETECT_DELTAS, profileFor,
   blockActivity, deltaForBlock, LADDER_MEAN,
@@ -115,6 +116,22 @@ export type SlotOrder = "ac-major" | "spread";
 export interface QimOptions {
   /** JPEG quality for output encoding (1-100). Default 75. */
   quality?: number;
+  /**
+   * Quantization table to embed on and encode with, raster order, 64 entries.
+   *
+   * When set, the output is written by our own JPEG encoder using exactly this
+   * table instead of going through canvas.convertToBlob({quality}), which picks
+   * its own. That is what makes §17.12 possible: coefficients quantized on a
+   * platform's own lattice give its re-encode nothing to change.
+   *
+   * Measured on a real photo at 1440 square, tracking the embedding band
+   * through an Instagram-style re-encode -- 85.9% of coefficients survive when
+   * we quantize at Q75, and 100% when we quantize at Instagram's table.
+   *
+   * Both sides must agree, exactly as with delta: decoding on the wrong table
+   * reads the right positions at the wrong scale.
+   */
+  quantTable?: Float64Array;
   /** QIM quantization step. Default 14. */
   delta?: number;
   /** Bit repetition factor for majority voting. Default 5. */
@@ -645,8 +662,8 @@ export async function embedQim(
   const lumaBits = bits.slice(chromaBitCount);
 
 
-  // Get quantization table for the target quality
-  const qt = quantizationTable(quality);
+  // Get quantization table for the target quality, unless the caller pinned one.
+  const qt = options?.quantTable ?? quantizationTable(quality);
 
   // Build a working copy of the pixel data
   const outPixels = new Uint8ClampedArray(pixels);
@@ -807,7 +824,14 @@ export async function embedQim(
     }
   }
 
-  // Step 8: Re-encode as JPEG
+  // Step 8: Re-encode as JPEG.
+  //
+  // With a pinned table we must write the file ourselves: Canvas takes a
+  // quality number and chooses its own table, which would immediately undo the
+  // lattice we just embedded on.
+  if (options?.quantTable) {
+    return encodeJpegWithTable(outPixels, width, height, { lumaQT: options.quantTable });
+  }
   return encodePixelsToJpeg(outPixels, width, height, quality);
 }
 
@@ -856,7 +880,7 @@ export async function detectQim(
     const blocksX = Math.floor(width / 8);
     const stream = buildCoeffStream(blocksY, blocksX, lumaAcCount, slotOrder);
 
-    const qt = quantizationTable(quality);
+    const qt = options?.quantTable ?? quantizationTable(quality);
     const yChannel = extractYChannel(pixels, width, height);
 
     const rawBits: number[] = [];
@@ -1177,9 +1201,12 @@ export async function encodeQimImageFile(
   // switch, and any evaluation of the band done by setting it on a profile
   // would have compared an image against an identical image.
   const activityBand = options?.activityBand ?? prof?.activityBand;
+  // §17.12: a profile can pin the quantization table it embeds and encodes on.
+  const quantTable = options?.quantTable
+    ?? (prof?.quantTableZigzag ? zigzagToRaster(prof.quantTableZigzag) : undefined);
   const result = await embedQim(jpegBytes, payload, {
     ...options, delta, chromaDelta, chromaChannels, rsNsym, lumaAcCount, slotOrder, repeat,
-    activityBand,
+    activityBand, quantTable,
   });
   return new Blob([result], { type: "image/jpeg" });
 }
@@ -1211,7 +1238,7 @@ function dedupeByDecodeConfig(profiles: PlatformProfile[]): PlatformProfile[] {
     const key = [
       p.delta, p.lumaAcCount ?? "-", p.rsNsym ?? "-", p.repeat ?? "-",
       p.activityBand ?? "high", p.chromaDelta ?? "-", p.chromaChannels ?? "-",
-      p.slotOrder ?? "-",
+      p.slotOrder ?? "-", p.quantTableZigzag ? p.quantTableZigzag.join(",") : "-",
     ].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
@@ -1266,7 +1293,8 @@ export async function decodeQimImageFile(
       // through to phase 3, which passes delta alone.
       const zigzagCandidates = dedupeByDecodeConfig(
         Object.values(PLATFORM_PROFILES).filter(
-          (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined || p.activityBand !== undefined)
+          (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined || p.activityBand !== undefined
+          || p.quantTableZigzag !== undefined)
             && p.chromaDelta === undefined,
         ),
       );
@@ -1306,6 +1334,7 @@ export async function decodeQimImageFile(
             result = await detectQim(jpegBytes, {
               ...options, delta: prof.delta, lumaAcCount: prof.lumaAcCount, rsNsym: prof.rsNsym,
               slotOrder, repeat: prof.repeat, activityBand: prof.activityBand,
+              quantTable: prof.quantTableZigzag ? zigzagToRaster(prof.quantTableZigzag) : undefined,
             });
             if (result && result.length > 0) break;
           }

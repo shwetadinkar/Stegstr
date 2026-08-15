@@ -35,6 +35,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   telegram_photo_1600: "Telegram test - old 1600px (resampled by Telegram)",
   telegram_file: "Telegram, as file (no resize, biggest capacity)",
   instagram: "Instagram (1440 square)",
+  instagram_matched: "Instagram — table-matched (TEST, needs verifying)",
   facebook: "Facebook (2048px)",
   twitter: "X / Twitter (4096px — 6x capacity, keeps dimensions)",
   imessage: "iMessage (1280px)",
