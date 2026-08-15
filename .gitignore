@@ -37,3 +37,8 @@ calibration/sweep/*
 !calibration/sweep/manifest.json
 *.bak
 dist-mcp/
+
+# actionlint binary: downloaded by the workflow, not committed.
+# A 5MB third-party executable was tracked here (inherited from upstream) in a
+# repository that asks users to verify checksums before running binaries.
+actionlint

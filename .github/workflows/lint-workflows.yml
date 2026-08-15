@@ -18,8 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
+      # Download the binary rather than using docker://rhysd/actionlint.
+      #
+      # The container form failed on every run for weeks while actionlint
+      # itself reported no problems -- running the same version locally over
+      # these same files exits 0. So the failure was the invocation, not the
+      # workflows, and a check that is permanently red teaches everyone to
+      # ignore it. The download script is the project's own and needs no
+      # container.
+      - name: Install actionlint
+        run: bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+        shell: bash
+
       - name: Check workflow files with actionlint
-        uses: docker://rhysd/actionlint:latest
-        with:
-          args: -color
+        run: ./actionlint -color
+        shell: bash
