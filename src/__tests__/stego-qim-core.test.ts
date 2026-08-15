@@ -338,6 +338,36 @@ describe("PLATFORM_WIDTHS", () => {
     expect(Math.max(bigPortrait.w, bigPortrait.h)).toBeLessThanOrEqual(4096);
   });
 
+  it("keeps a portrait cover within the cap on every channel", () => {
+    /*
+     * Which channels the width-only bug actually bit, and which it could not.
+     *
+     * A 3024x4032 portrait phone photo against each target, under the old rule
+     * that capped width alone:
+     *
+     *   Twitter / WhatsApp HD (4096)   3024x4032   fine -- long edge already
+     *                                              under the cap, so no resize
+     *                                              happened either way
+     *   WhatsApp standard (1600)       1600x2128   DESTROYED
+     *   Telegram as photo (1280)       1280x1704   DESTROYED
+     *   Facebook (2048)                2048x2728   DESTROYED
+     *
+     * This matters for reading device reports: a portrait cover surviving
+     * X/Twitter says nothing about the fix, because that path was identical
+     * before and after. Only the smaller-cap channels exercise it.
+     */
+    for (const cap of [1280, 1600, 2048, 4096]) {
+      const g = coverGeometry(3024, 4032, cap, false);
+      expect(`${cap}:${Math.max(g.w, g.h) <= cap}`).toBe(`${cap}:true`);
+    }
+  });
+
+  it("leaves the 4096 channels untouched, where portrait was never broken", () => {
+    // Old and new agree exactly here, which is why a portrait image survives
+    // X/Twitter regardless of this fix.
+    expect(coverGeometry(3024, 4032, 4096, false)).toMatchObject({ w: 3024, h: 4032 });
+  });
+
   it("keeps the aspect ratio when capping either orientation", () => {
     const p = coverGeometry(3000, 4000, 2000, false);
     expect(p.w / p.h).toBeCloseTo(3000 / 4000, 2);
