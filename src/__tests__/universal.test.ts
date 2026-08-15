@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { installCanvasPolyfill, makeCoverJpeg } from "./canvas-polyfill";
+import { installCanvasPolyfill, makeCoverJpeg } from "../node-canvas";
 installCanvasPolyfill();
 
 it("universal profile: capacity, embed, self-test, decode", async () => {

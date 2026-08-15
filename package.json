@@ -17,9 +17,12 @@
     "launch:both": "./scripts/launch-both-profiles.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "node tests/e2e/run-permutations.mjs"
+    "test:e2e": "node tests/e2e/run-permutations.mjs",
+    "build:mcp": "esbuild src/mcp-server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist-mcp/server.mjs --external:@napi-rs/canvas",
+    "mcp": "npm run build:mcp && node dist-mcp/server.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@noble/ciphers": "^2.3.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
@@ -36,6 +39,7 @@
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.2.0",
     "@types/pako": "^2.0.4",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

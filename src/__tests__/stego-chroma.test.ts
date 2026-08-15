@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { installCanvasPolyfill, makeCoverJpeg, simulateChannel, makeFile } from "./canvas-polyfill";
+import { installCanvasPolyfill, makeCoverJpeg, simulateChannel, makeFile } from "../node-canvas";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { ycbcrToRgb } from "../stego-color";
 

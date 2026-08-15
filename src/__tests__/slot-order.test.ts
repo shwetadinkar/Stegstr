@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { webcrypto } from "node:crypto";
-import { installCanvasPolyfill, makeCoverJpeg } from "./canvas-polyfill";
+import { installCanvasPolyfill, makeCoverJpeg } from "../node-canvas";
 installCanvasPolyfill();
 
 beforeAll(() => {

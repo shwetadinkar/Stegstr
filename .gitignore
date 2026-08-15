@@ -36,3 +36,4 @@ calibration/rec/*
 calibration/sweep/*
 !calibration/sweep/manifest.json
 *.bak
+dist-mcp/

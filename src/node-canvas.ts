@@ -1,5 +1,5 @@
 /**
- * canvas-polyfill.ts — run the real browser encoder under Node.
+ * node-canvas.ts — run the real browser encoder under Node.
  *
  * stego-qim.ts encodes and decodes JPEG through OffscreenCanvas, so its actual
  * behaviour has never been testable outside a browser. The existing e2e harness
@@ -13,16 +13,30 @@
  * Providing OffscreenCanvas, ImageData and createImageBitmap on globalThis lets
  * the shipped code path run unmodified in vitest, so embed -> channel -> detect
  * can be asserted in CI rather than checked by hand on a phone.
+ *
+ * It has since become load-bearing outside the tests: the MCP server runs the
+ * same shipped encoder headless, so agents get the exact code path every
+ * platform measurement was made against rather than a second implementation
+ * that has to be kept in step. That is why this lives in src/ rather than in
+ * __tests__ -- a runtime component must not import from the test tree.
+ *
+ * @napi-rs/canvas is a devDependency because only Node consumers need it; the
+ * browser build never imports this file.
  */
 
-import { createCanvas, loadImage, ImageData as NapiImageData } from "@napi-rs/canvas";
+import { createCanvas, loadImage, ImageData as NapiImageData, type Canvas } from "@napi-rs/canvas";
+
+// createCanvas is overloaded: (w, h) returns Canvas, (w, h, svgFlag) returns
+// SvgCanvas. TypeScript resolves ReturnType<> to the LAST overload, so
+// inferring the field's type gives SvgCanvas -- which has no toBuffer(). Name
+// the concrete type instead of inferring it.
 
 interface BlobLike {
   arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 class OffscreenCanvasPolyfill {
-  private canvas: ReturnType<typeof createCanvas>;
+  private canvas: Canvas;
   width: number;
   height: number;
 

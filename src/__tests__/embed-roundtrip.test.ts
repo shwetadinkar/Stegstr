@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { installCanvasPolyfill, makeCoverJpeg, simulateChannel } from "./canvas-polyfill";
+import { installCanvasPolyfill, makeCoverJpeg, simulateChannel } from "../node-canvas";
 
 installCanvasPolyfill();
 
@@ -67,7 +67,7 @@ describe("encoder round-trip (real shipped code path)", () => {
   }, 90000);
 
   it("file-level API picks the step size from the target platform", async () => {
-    const { makeFile } = await import("./canvas-polyfill");
+    const { makeFile } = await import("../node-canvas");
     const cover = makeFile(makeCoverJpeg(1600, 1200));
     const text = new TextEncoder().encode(JSON.stringify({ hello: "world" }));
     const blob = await encodeQimImageFile(cover, text, { platform: "whatsapp_standard" });
