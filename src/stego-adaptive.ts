@@ -395,6 +395,41 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
       + "use the Telegram profiles for that. Not for Instagram, which needs 1440 square, step 56.",
   },
   /**
+   * §27.4 TEST PROFILE: universal geometry at delta 20 instead of 28.
+   *
+   * WHY IT MIGHT BE WORTH IT. Most of the perturbation in a stego image is the
+   * JPEG re-encode, not the payload. Measured on a real 1600x1200 photo,
+   * against the same cover re-encoded with no payload at all:
+   *
+   *   no payload (the JPEG floor)   2.86
+   *   delta 20                      3.11    payload contributes 0.25
+   *   delta 28                      3.33    payload contributes 0.47
+   *
+   * To the eye that is a 7% difference. To anything looking for a payload
+   * ABOVE the natural noise floor it is a halving, and that is the number
+   * steganographic invisibility actually turns on.
+   *
+   * WHY IT IS NOT THE DEFAULT. delta 28 is margin, and the margin is real: §1
+   * recorded delta 14 failing ERRATICALLY through recompression -- passing at
+   * Q90 and failing at Q95 -- because the lattice gets marginal enough that
+   * survival depends which way individual coefficients round. 20 passed every
+   * quality in the simulator, but the simulator does not sharpen, and WhatsApp
+   * is the highest-traffic channel in the app. A regression here is expensive.
+   *
+   * Needs a phone: send the same cover and payload at 20 and at 28, several
+   * times each, and look for the erratic failure signature rather than a
+   * single pass.
+   */
+  whatsapp_step20: {
+    width: 1600, square: false, delta: 20, lumaAcCount: 6, rsNsym: 32,
+    note:
+      "TEST PROFILE (§27.4). WhatsApp/universal geometry at step 20 instead of 28. " +
+      "Halves the payload's signal above the JPEG noise floor (0.25 against 0.47) at " +
+      "the cost of margin -- step 14 fails erratically through recompression, so 20 is " +
+      "closer to the cliff than 28. Send it several times before trusting it.",
+  },
+
+  /**
    * The maximum-capacity channel. Telegram's "send as file" does not
    * recompress at all, so the only damage a payload takes is this app's own
    * JPEG encode -- no platform resize, no second quantisation. That means the
@@ -470,6 +505,7 @@ export const DEFAULT_PLATFORM = "universal";
  */
 export const USER_PLATFORMS: readonly string[] = [
   "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
+  "whatsapp_step20",    // 1600 at step 20 (§27.4) -- TEST, needs a phone
   "whatsapp_hd",     // 4096 - X/Twitter, and WhatsApp with the HD toggle on
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity

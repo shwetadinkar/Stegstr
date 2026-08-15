@@ -51,8 +51,32 @@ describe("measured platform profiles", () => {
       // now carry lumaAcCount too (§13.5 made the restriction the default),
       // and they must still clear the threshold like any other real target.
       if (!USER_PLATFORMS.includes(name) && p.lumaAcCount !== undefined) continue;
+
+      /*
+       * TEST profiles are exempt for the same reason the bracket profiles are:
+       * they exist to challenge this number on a device, and a profile that
+       * has to clear it cannot test it.
+       *
+       * The threshold is real and was measured against Q75 -- upstream's 14
+       * fails a WhatsApp-like recompression outright. A simulation showing 20
+       * surviving does NOT overturn it: the simulator does not sharpen, and
+       * §15.5 records what trusting the optimistic simulator cost last time.
+       *
+       * What this test protects is that no SHIPPING DEFAULT drops below 26.
+       * That is asserted directly below.
+       */
+      if (/TEST PROFILE/.test(p.note)) continue;
       expect(p.delta).toBeGreaterThanOrEqual(26);
     }
+  });
+
+  it("no TEST profile is a default anyone lands on by accident", async () => {
+    // A profile below the measured threshold must be chosen deliberately. It
+    // is labelled TEST in the picker, and it must never be what an omitted
+    // platform argument resolves to.
+    const { DEFAULT_PLATFORM } = await import("../stego-qim");
+    expect(/TEST PROFILE/.test(PLATFORM_PROFILES[DEFAULT_PLATFORM].note)).toBe(false);
+    expect(PLATFORM_PROFILES[DEFAULT_PLATFORM].delta).toBeGreaterThanOrEqual(26);
   });
 
   it("every user-facing platform exists, and no bracket profile is one", () => {

@@ -90,9 +90,20 @@ describe("bracket profiles left the picker but not the decoder", () => {
     // list is the thing to update.
     const { USER_PLATFORMS } = await import("../stego-adaptive");
     expect([...USER_PLATFORMS].sort()).toEqual(
-      ["facebook", "instagram", "none",
-       "telegram_file", "telegram_photo", "universal", "whatsapp_hd"].sort(),
+      ["facebook", "instagram", "none", "telegram_file", "telegram_photo",
+       "universal", "whatsapp_step20", "whatsapp_hd"].sort(),
     );
+  });
+
+  it("keeps whatsapp_step20 marked as a test, and universal at 28", async () => {
+    // §27.4. Halving the payload's signal above the JPEG floor is worth
+    // testing, but delta 28 is margin and §1 measured delta 14 failing
+    // ERRATICALLY -- passing at one quality and failing at a higher one. The
+    // default must not move on simulator evidence.
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    expect(PLATFORM_PROFILES.whatsapp_step20.delta).toBe(20);
+    expect(PLATFORM_PROFILES.whatsapp_step20.note).toMatch(/TEST PROFILE/);
+    expect(PLATFORM_PROFILES.universal.delta).toBe(28);
   });
 
   it("Instagram now embeds on Instagram's own quantization table", async () => {
