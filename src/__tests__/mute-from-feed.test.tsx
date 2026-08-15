@@ -64,6 +64,57 @@ describe("Mute is offered where the note is", () => {
   });
 });
 
+describe("bulk selection", () => {
+  it("offers a checkbox on your own note", () => {
+    render(<NoteCard
+      event={ev(ME)}
+      state={{ ...state(), selectMode: true, isSelected: () => false }}
+      actions={{ onToggleSelect: vi.fn() }}
+      showActions
+    />);
+    expect(screen.getByRole("checkbox", { name: /select this note/i })).toBeInTheDocument();
+  });
+
+  it("does not offer one on someone else's", () => {
+    // nostr cannot withdraw another person's note; a checkbox here would imply
+    // the app can do something it cannot.
+    render(<NoteCard
+      event={ev(THEM)}
+      state={{ ...state(), selectMode: true, isSelected: () => false }}
+      actions={{ onToggleSelect: vi.fn() }}
+      showActions
+    />);
+    expect(screen.queryByRole("checkbox", { name: /select this note/i })).toBeNull();
+  });
+
+  it("shows nothing when select mode is off", () => {
+    render(<NoteCard event={ev(ME)} state={state()} actions={{ onToggleSelect: vi.fn() }} showActions />);
+    expect(screen.queryByRole("checkbox", { name: /select this note/i })).toBeNull();
+  });
+
+  it("reports the note that was ticked", () => {
+    const onToggleSelect = vi.fn();
+    render(<NoteCard
+      event={ev(ME)}
+      state={{ ...state(), selectMode: true, isSelected: () => false }}
+      actions={{ onToggleSelect }}
+      showActions
+    />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /select this note/i }));
+    expect(onToggleSelect.mock.calls[0][0].pubkey).toBe(ME);
+  });
+
+  it("reflects the current selection", () => {
+    render(<NoteCard
+      event={ev(ME)}
+      state={{ ...state(), selectMode: true, isSelected: () => true }}
+      actions={{ onToggleSelect: vi.fn() }}
+      showActions
+    />);
+    expect(screen.getByRole("checkbox", { name: /select this note/i })).toBeChecked();
+  });
+});
+
 describe("Mute and Delete are kept apart", () => {
   it("does not offer Mute on your own note", () => {
     // Muting yourself would look exactly like the app losing your posts.

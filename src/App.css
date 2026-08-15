@@ -1056,6 +1056,14 @@ textarea { resize: vertical; min-height: 60px; }
 .embed-note-pick span { overflow-wrap: anywhere; }
 
 /* The outcome of an attach, next to the button that caused it. */
+.feed-select-actions { display: flex; gap: 0.4rem; align-items: center; margin-right: auto; }
+.note-select { display: flex; align-items: flex-start; padding-top: 0.15rem; margin-right: 0.5rem; }
+.note-select input { cursor: pointer; }
+
+.stego-drop-zone-clickable { cursor: pointer; }
+.stego-drop-zone-clickable:hover { border-color: #111; background: #fafafa; }
+.stego-drop-zone-clickable:focus-visible { outline: none; border-color: #111; box-shadow: 0 0 0 3px rgba(17,17,17,0.12); }
+
 .attach-notice {
   display: flex;
   align-items: flex-start;

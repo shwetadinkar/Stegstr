@@ -25,7 +25,9 @@ describe("app smoke", () => {
     render(<AppBootstrap />);
     // Something from the shell, so this fails loudly if render produced nothing.
     expect(await screen.findByText(/Steganography/i, {}, { timeout: 5000 })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /detect image/i })).toBeTruthy();
+    // The drop zone IS the detect control now -- it used to point at a
+    // separate "Detect image" button for the same job.
+    expect(screen.getByRole("button", { name: /drop an image here/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /embed image/i })).toBeTruthy();
   }, 30000);
 });

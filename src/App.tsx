@@ -4,7 +4,7 @@ import { isWeb, decodeStegoFile, encodeStegoToBlob, saveBlob, fileFromPath, open
 import { getDotCapacityForFile } from "./stego-dot-web";
 import { getTauri } from "./platform-desktop";
 import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls, fetchEventById, publishAndConfirm } from "./net-adapter";
-import { buildPointer, parsePointer, resolvePointer, PointerUnresolved } from "./pointer";
+import { buildPointer, parsePointer, resolvePointer } from "./pointer";
 import { profileFor } from "./stego-adaptive";
 import DetectResultModal, { type DetectedEvent } from "./DetectResultModal";
 import { verifyEvent, packForCapacity } from "./sync-engine";
@@ -92,19 +92,29 @@ async function followPointerIfAny(
   ourPrivKeyHex: string,
   log: (message: string) => void,
   networkEnabled: boolean,
+  enableNetwork: () => void,
 ): Promise<string> {
   const pointer = parsePointer(jsonString);
   if (!pointer) return jsonString;
-  // Network OFF must mean off. Every other network path in this file is gated
-  // on this flag; this one was not, so opening a pointer image with the toggle
-  // off still queried relays -- while the banner promised "nothing is sent".
-  // Worse than a wrong toggle: the request names the exact event id being
-  // read, so it tells four relays which hidden payload someone just opened, in
-  // an app whose entire premise is that nobody can tell.
+  // Turn the network on rather than refusing.
+  //
+  // Opening the image IS the intent to read it, and refusing left the user
+  // with a dead end: flip a switch, find the image again, open it again. So
+  // this now matches attaching and pointer-mode embedding, both of which
+  // enable the network at the moment the user asks for something that needs
+  // it.
+  //
+  // What must NOT be lost is the disclosure. This request names the exact
+  // event id, so it tells relays which hidden payload someone just opened, in
+  // an app whose premise is that nobody can tell. It used to ignore the toggle
+  // entirely while the banner promised "nothing is sent" (§17.8) -- the fix
+  // for that was to make the consequence visible, not to make the feature
+  // unreachable. It is logged every time, and stays visible in the stego log.
   if (!networkEnabled) {
-    throw new PointerUnresolved(
-      "This image holds a link to content on a relay, and Network is off. Turn Network on to " +
-      "fetch it — note that doing so tells the relay which image you are reading.",
+    enableNetwork();
+    log(
+      "Network turned on automatically: this image holds a link to content on a relay. " +
+      "Fetching it tells the relay which image you are reading.",
     );
   }
   log(
@@ -290,6 +300,10 @@ function App({ profile }: { profile: string | null }) {
    * the Network switch, so reporting both put the same green message in two
    * places at once and drew the eye away from the control that caused it.
    */
+  /** Bulk selection for deleting several of your own notes at once. */
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedNoteIdsForDelete, setSelectedNoteIdsForDelete] = useState<Set<string>>(new Set());
+
   const [attachNotice, setAttachNotice] =
     useState<{ text: string; kind: "ok" | "error" } | null>(null);
   const [decodeError, setDecodeError] = useState<string>("");
@@ -313,7 +327,11 @@ function App({ profile }: { profile: string | null }) {
   // (§10.4). Off by default: self-contained is the property that makes an
   // image worth sending in the first place, and pointer mode trades it away
   // for quietness. The user opts in when the channel is tight.
-  const [embedPointerMode, setEmbedPointerMode] = useState(false);
+  // Default ON. A ~260-byte pointer survives every channel regardless of cover
+  // size, where a self-contained bundle is bounded by the photo. The cost is
+  // real and stated in the dialog: it needs the network, the recipient must be
+  // online, and their relay request is observable.
+  const [embedPointerMode, setEmbedPointerMode] = useState(true);
   // Slot-ordering override for A/B comparison (§17.4). "profile" uses whatever
   // the platform profile declares; the other two force one ordering so the same
   // cover and payload can be shot both ways and judged by eye. Decode is
@@ -1444,7 +1462,10 @@ function App({ profile }: { profile: string | null }) {
         }
         // A pointer image decrypts to a pointer, not a bundle; fetch what it
         // names before anything downstream can treat it as content.
-        jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog, networkEnabled);
+        jsonString = await followPointerIfAny(
+          jsonString, effectivePrivKey, addStegoLog, networkEnabled,
+          () => setNetworkEnabled(true),
+        );
         const bundle = JSON.parse(jsonString) as NostrStateBundle;
         if (!Array.isArray(bundle.events)) {
           setDecodeError("Invalid payload");
@@ -2422,6 +2443,57 @@ function App({ profile }: { profile: string | null }) {
     [selfPubkeys, profiles, toast],
   );
 
+  const toggleNoteSelected = useCallback((note: NostrEvent) => {
+    setSelectedNoteIdsForDelete((prev) => {
+      const next = new Set(prev);
+      if (next.has(note.id)) next.delete(note.id); else next.add(note.id);
+      return next;
+    });
+  }, []);
+
+  /**
+   * Delete every selected note in one pass.
+   *
+   * One kind-5 tombstone per note is the protocol's own shape -- a tombstone
+   * names the events it deletes, and batching them into a single event would
+   * be a private convention no other client understands. What is batched is
+   * the user's decision, not the wire format.
+   *
+   * All tombstones are added to local state together so the feed updates once
+   * rather than jumping N times.
+   */
+  const handleDeleteSelected = useCallback(async () => {
+    const ids = Array.from(selectedNoteIdsForDelete);
+    const mine = events.filter((e) => ids.includes(e.id) && selfPubkeys.includes(e.pubkey));
+    if (mine.length === 0) return;
+
+    const tombstones: NostrEvent[] = [];
+    for (const note of mine) {
+      const identityForNote = identities.find(
+        (i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex)) === note.pubkey,
+      );
+      const privToUse = identityForNote?.privKeyHex ?? effectivePrivKey;
+      try {
+        const ev = await Nostr.finishEventAsync(
+          { kind: 5, content: "", tags: [["e", note.id]], created_at: Math.floor(Date.now() / 1000) },
+          Nostr.hexToBytes(privToUse),
+        );
+        tombstones.push(ev as NostrEvent);
+      } catch (_) { /* skip this one, report the shortfall below */ }
+    }
+    if (tombstones.length) setEvents((prev) => [...tombstones, ...prev]);
+    if (networkEnabled && canPublishToNetwork) for (const t of tombstones) publishViaRelay(t);
+
+    setSelectedNoteIdsForDelete(new Set());
+    setSelectMode(false);
+    // Report the number actually deleted, not the number asked for.
+    const msg = tombstones.length === mine.length
+      ? `Deleted ${tombstones.length} note${tombstones.length === 1 ? "" : "s"}.`
+      : `Deleted ${tombstones.length} of ${mine.length} — the rest could not be signed.`;
+    setStatus(msg);
+    toast.success(msg);
+  }, [selectedNoteIdsForDelete, events, selfPubkeys, identities, effectivePrivKey, networkEnabled, canPublishToNetwork, toast]);
+
   const handleDelete = useCallback(
     async (note: NostrEvent) => {
       if (!selfPubkeys.includes(note.pubkey)) return;
@@ -2807,6 +2879,8 @@ function App({ profile }: { profile: string | null }) {
 
   // --- Shared NoteCard state & actions ---
   const noteCardState: NoteCardState = useMemo(() => ({
+    selectMode,
+    isSelected: (id: string) => selectedNoteIdsForDelete.has(id),
     profiles,
     selfPubkeys,
     getIdentityLabels: getIdentityLabelsForPubkey,
@@ -2831,7 +2905,8 @@ function App({ profile }: { profile: string | null }) {
     onUnbookmark: handleUnbookmark,
     onDelete: handleDelete,
     onMuteAuthor: handleMuteAuthor,
-  }), [navigateToProfile, handleLike, handleRepost, handleZap, handleBookmark, handleUnbookmark, handleDelete, handleMuteAuthor]);
+    onToggleSelect: toggleNoteSelected,
+  }), [navigateToProfile, handleLike, handleRepost, handleZap, handleBookmark, handleUnbookmark, handleDelete, handleMuteAuthor, toggleNoteSelected]);
 
   /** Actions for views that redirect reply to the feed. */
   const noteCardActionsRedirectReply: NoteCardActions = useMemo(() => ({
@@ -2992,6 +3067,13 @@ function App({ profile }: { profile: string | null }) {
               postAttachments={postAttachments}
               setPostAttachments={setPostAttachments}
               uploadingMedia={uploadingMedia}
+              selectMode={selectMode}
+              selectedCount={selectedNoteIdsForDelete.size}
+              onToggleSelectMode={() => {
+                setSelectMode((on) => !on);
+                setSelectedNoteIdsForDelete(new Set());
+              }}
+              onDeleteSelected={handleDeleteSelected}
               attachNotice={attachNotice}
               onDismissAttachNotice={() => setAttachNotice(null)}
               postMediaInputRef={postMediaInputRef}
@@ -3173,9 +3255,23 @@ function App({ profile }: { profile: string | null }) {
               Best covers are detailed photos — foliage, fabric, crowds, brickwork.
               Avoid sky, plain walls, screenshots and logos.
             </p>
+            {/* The drop zone IS the detect control.
+                It used to say "or click Detect image below", pointing at a
+                separate button for the same job -- two targets for one action,
+                and the instruction only made sense if you had already found
+                the button. Clicking the zone now opens the picker. */}
             <div
-              className={`stego-drop-zone${dragOverStego ? " drag-active" : ""}`}
-              aria-label="Drop image here to detect"
+              role="button"
+              tabIndex={0}
+              className={`stego-drop-zone stego-drop-zone-clickable${dragOverStego ? " drag-active" : ""}`}
+              aria-label="Drop an image here, or click to choose one, to detect hidden data"
+              onClick={() => { if (!detecting && !embedding) handleLoadFromImage(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  if (!detecting && !embedding) handleLoadFromImage();
+                }
+              }}
               onDragEnter={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -3206,8 +3302,8 @@ function App({ profile }: { profile: string | null }) {
                 handleLoadFromImage(file);
               }}
             >
-              <strong>Drop image here to detect</strong>
-              <br /><span style={{fontSize: "0.8rem", color: "#888"}}>or click "Detect image" below</span>
+              <strong>{detecting ? "Reading image…" : "Drop an image here to detect"}</strong>
+              <br /><span style={{ fontSize: "0.85rem", color: "#555", fontWeight: 600 }}>or click to choose one</span>
             </div>
             {(detecting || embedding) && (
               <div className="stego-progress">
@@ -3216,7 +3312,6 @@ function App({ profile }: { profile: string | null }) {
               </div>
             )}
             <div className="stego-actions">
-              <button type="button" className="btn-stego" onClick={() => handleLoadFromImage()} disabled={detecting || embedding}>Detect image</button>
               <button type="button" className="btn-stego btn-primary" onClick={handleSaveToImage} disabled={detecting || embedding}>Embed image</button>
               {profile != null && !isWeb() && (
                 <>
@@ -3413,6 +3508,7 @@ function App({ profile }: { profile: string | null }) {
           targetPlatform={targetPlatform}
           onTargetPlatformChange={setTargetPlatform}
           pointerMode={embedPointerMode}
+          networkEnabled={networkEnabled}
           onPointerModeChange={(on) => {
             setEmbedPointerMode(on);
             // Pointer mode publishes to a relay, so it cannot work offline.

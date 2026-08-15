@@ -7,6 +7,7 @@ import type { NostrEvent, ProfileData } from "./types";
 /** Callbacks the NoteCard may invoke. All are optional — omit to hide that action. */
 export interface NoteCardActions {
   onNavigateProfile?: (pubkey: string) => void;
+  onToggleSelect?: (ev: NostrEvent) => void;
   onReply?: (ev: NostrEvent) => void;
   onLike?: (ev: NostrEvent) => void;
   onRepost?: (ev: NostrEvent) => void;
@@ -28,6 +29,15 @@ export interface NoteCardActions {
 /** Read-only helpers for rendering state. */
 export interface NoteCardState {
   profiles: Record<string, ProfileData>;
+  /**
+   * Bulk selection, for deleting several of your own notes at once.
+   *
+   * Only ever offered on your own notes: nostr cannot withdraw someone else's
+   * from the network, and a checkbox implying otherwise would be a lie about
+   * what the app can do.
+   */
+  selectMode?: boolean;
+  isSelected?: (noteId: string) => boolean;
   selfPubkeys: string[];
   getIdentityLabels?: (pubkey: string) => string[];
   hasLiked: (noteId: string) => boolean;
@@ -91,6 +101,19 @@ export function NoteCard({
 
   return (
     <div className={`note-card${className ? ` ${className}` : ""}`} onClick={onClick} style={style}>
+      {/* Bulk-select checkbox, own notes only. Takes the avatar's place rather
+          than sitting beside it, so rows do not reflow when select mode turns
+          on and the list stops jumping under the cursor. */}
+      {state.selectMode && state.selfPubkeys.includes(ev.pubkey) && actions.onToggleSelect && (
+        <label className="note-select" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={state.isSelected?.(ev.id) ?? false}
+            onChange={() => actions.onToggleSelect!(ev)}
+            aria-label="Select this note"
+          />
+        </label>
+      )}
       <div className="note-avatar">
         {profile?.picture ? (
           <img src={profile.picture} alt="" referrerPolicy="no-referrer" onError={(e) => { e.currentTarget.style.display = "none"; }} />

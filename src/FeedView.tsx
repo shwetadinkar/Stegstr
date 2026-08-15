@@ -23,6 +23,11 @@ export interface FeedViewProps {
    * switch, which put the same message in two places at once and pulled the
    * eye away from the control the user had just used.
    */
+  /** Bulk selection for deleting several of your own notes at once. */
+  selectMode: boolean;
+  selectedCount: number;
+  onToggleSelectMode: () => void;
+  onDeleteSelected: () => void;
   attachNotice: { text: string; kind: "ok" | "error" } | null;
   onDismissAttachNotice: () => void;
   postMediaInputRef: React.RefObject<HTMLInputElement | null>;
@@ -67,7 +72,8 @@ export interface FeedViewProps {
 
 export function FeedView({
   myPicture, myName, newPost, setNewPost, postAttachments, setPostAttachments,
-  uploadingMedia, attachNotice, onDismissAttachNotice, postMediaInputRef, handlePostMediaUpload, handlePost,
+  uploadingMedia, selectMode, selectedCount, onToggleSelectMode, onDeleteSelected,
+  attachNotice, onDismissAttachNotice, postMediaInputRef, handlePostMediaUpload, handlePost,
   feedFilter, setFeedFilter,
   hideSensitive, setHideSensitive,
   notesEmpty, feedItems,
@@ -150,6 +156,24 @@ export function FeedView({
       <section className="feed-section">
         <div className="feed-header-row">
           <h2 className="feed-title">Feed</h2>
+          {/* Bulk delete. Only your own notes get a checkbox -- nostr cannot
+              withdraw anyone else's from the network, and offering it would be
+              a lie about what the app can do. */}
+          <div className="feed-select-actions">
+            {selectMode && (
+              <button
+                type="button"
+                className="btn-small btn-delete"
+                onClick={onDeleteSelected}
+                disabled={selectedCount === 0}
+              >
+                Delete {selectedCount > 0 ? selectedCount : ""}
+              </button>
+            )}
+            <button type="button" className="btn-small" onClick={onToggleSelectMode}>
+              {selectMode ? "Cancel" : "Select"}
+            </button>
+          </div>
           <div className="feed-filter-tabs">
             <button type="button" className={feedFilter === "global" ? "active" : ""} onClick={() => setFeedFilter("global")}>Global</button>
             <button type="button" className={feedFilter === "following" ? "active" : ""} onClick={() => setFeedFilter("following")}>Following</button>

@@ -36,10 +36,10 @@ const PLATFORM_LABELS: Record<string, string> = {
   telegram_photo_1600: "Telegram test - old 1600px (resampled by Telegram)",
   telegram_file: "Telegram, as file (no resize, biggest capacity)",
   instagram: "Instagram (1440 square)",
-  facebook: "Facebook HD (2048px — biggest resized canvas)",
+  facebook: "Facebook (2048px)",
   twitter: "X / Twitter (4096px — 6x capacity, keeps dimensions)",
   imessage: "iMessage (1280px)",
-  universal: "Universal (1600px) — WhatsApp standard send, Facebook",
+  universal: "Universal (1600px) — safe on WhatsApp, X/Twitter, Facebook",
   instagram_d40: "Instagram test - step 40",
   instagram_d44: "Instagram test - step 44",
   instagram_d48: "Instagram test - step 48",
@@ -76,6 +76,8 @@ export interface EmbedModalProps {
   onTargetPlatformChange: (platform: string) => void;
   pointerMode: boolean;
   onPointerModeChange: (on: boolean) => void;
+  /** Pointer mode publishes to a relay, so it cannot work with this off. */
+  networkEnabled: boolean;
   slotOrder: "profile" | "ac-major" | "spread";
   onSlotOrderChange: (order: "profile" | "ac-major" | "spread") => void;
   /**
@@ -110,6 +112,7 @@ export function EmbedModal({
   onTargetPlatformChange,
   pointerMode,
   onPointerModeChange,
+  networkEnabled,
   slotOrder,
   onSlotOrderChange,
   selectableNotes,
@@ -180,19 +183,6 @@ export function EmbedModal({
         <h3>Embed feed into image</h3>
         <p className="muted">Data is encrypted so only Stegstr users can read it. DMs are encrypted for the recipient only.</p>
 
-        {/* What makes a good cover. Stated at the point of choosing, because
-            by the time an embed fails on a flat image the user has already
-            spent the time -- and the property that matters (fine detail) is
-            not one people would guess at. */}
-        <p className="muted" style={{ fontSize: "0.82rem", margin: "0.5rem 0", lineHeight: 1.45 }}>
-          <strong>Pick a detailed photo</strong> — foliage, fabric, crowds, brickwork.
-        </p>
-        <Note label="What makes a good cover photo?">
-          Detail hides the data, and the same texture is what lets it survive a
-          platform's re-compression. Avoid large smooth areas — sky, plain walls,
-          screenshots and logos give it nowhere to hide.
-        </Note>
-
         {/* Cover image picker.
             Was gated on isWeb(), which left the desktop build with no way to
             choose an image at all -- the one control the whole dialog exists
@@ -210,6 +200,17 @@ export function EmbedModal({
             >
               {embedCoverFile ? embedCoverFile.name : "Choose cover image"}
             </button>
+            {/* Cover guidance sits beside the button that needs it, rather
+                than as two paragraphs above the fold. The property that
+                matters -- fine detail -- is not one people would guess at, but
+                it does not need to be the first thing in the dialog. */}
+            <Note label="What makes a good cover photo?">
+              <strong>Pick a detailed photo</strong> — foliage, fabric, crowds,
+              brickwork. Detail hides the data, and the same texture is what
+              lets it survive a platform's re-compression. Avoid large smooth
+              areas — sky, plain walls, screenshots and logos give it nowhere
+              to hide.
+            </Note>
           </div>
         )}
 
@@ -223,6 +224,47 @@ export function EmbedModal({
               ? `${capacityInfo} — not the limit in pointer mode; a ~200-byte pointer carries your whole feed.`
               : capacityInfo}
           </p>
+        )}
+
+        {/* Target platform, out of Advanced and directly under the cover.
+            It is the single setting that decides whether the hidden data
+            survives at all -- choosing a size the platform will resize
+            destroys it -- so burying it behind "Advanced options" put the most
+            consequential control in the least visible place. */}
+        {/* Platform selector (QIM only) */}
+        {stegoMethod === "qim" && (
+          <div className="embed-platform-selector" style={{ marginTop: "0.5rem" }}>
+            <label className="embed-section-label">Target platform:</label>
+            <select
+              value={targetPlatform}
+              onChange={(e) => onTargetPlatformChange(e.target.value)}
+            >
+              {platformKeys.map((key) => (
+                <option key={key} value={key}>{PLATFORM_LABELS[key] ?? key}</option>
+              ))}
+            </select>
+            <label style={{ display: "block", marginTop: "0.4rem", fontSize: "0.8rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={showTestProfiles}
+                onChange={(e) => setShowTestProfiles(e.target.checked)}
+              />
+              {" "}Show experimental test profiles (for bracket testing)
+            </label>
+            <Note label="About this platform target">
+              {(() => {
+                const prof = profileFor(targetPlatform);
+                const size = prof.width === 0
+                  ? "no resize"
+                  : prof.square
+                    ? prof.width + " x " + prof.width + " square"
+                    : prof.width + "px wide";
+                return "Pre-resizes to " + size + ". " + prof.note;
+              })()}
+              {" "}Sizes are measured from real platform round-trips. Choosing a size
+              the platform will resize destroys the hidden data.
+            </Note>
+          </div>
         )}
 
         {/* What to carry.
@@ -380,6 +422,18 @@ export function EmbedModal({
               />
               {" "}Send a link instead of the content
             </label>
+            {/* Said here rather than only on clicking Embed. This is on by
+                default, so the one configuration that cannot work offline is
+                also the one a user is most likely to be in without having
+                chosen it. */}
+            {pointerMode && !networkEnabled && (
+              <p className="attach-notice attach-notice-error" role="alert" style={{ marginTop: "0.4rem" }}>
+                <span>
+                  Sending a link needs the network, and Network is off. Turn it on, or untick
+                  this to embed everything in the image — which works offline.
+                </span>
+              </p>
+            )}
             <Note label={pointerMode ? "What sending a link means" : "What embedding everything means"}>
               {pointerMode
                 ? "The image carries a ~200-byte pointer and your feed goes to a relay, encrypted. " +
@@ -455,41 +509,6 @@ export function EmbedModal({
               </div>
             )}
 
-            {/* Platform selector (QIM only) */}
-            {stegoMethod === "qim" && (
-              <div className="embed-platform-selector" style={{ marginTop: "0.5rem" }}>
-                <label className="embed-section-label">Target platform:</label>
-                <select
-                  value={targetPlatform}
-                  onChange={(e) => onTargetPlatformChange(e.target.value)}
-                >
-                  {platformKeys.map((key) => (
-                    <option key={key} value={key}>{PLATFORM_LABELS[key] ?? key}</option>
-                  ))}
-                </select>
-                <label style={{ display: "block", marginTop: "0.4rem", fontSize: "0.8rem", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={showTestProfiles}
-                    onChange={(e) => setShowTestProfiles(e.target.checked)}
-                  />
-                  {" "}Show experimental test profiles (for bracket testing)
-                </label>
-                <Note label="About this platform target">
-                  {(() => {
-                    const prof = profileFor(targetPlatform);
-                    const size = prof.width === 0
-                      ? "no resize"
-                      : prof.square
-                        ? prof.width + " x " + prof.width + " square"
-                        : prof.width + "px wide";
-                    return "Pre-resizes to " + size + ". " + prof.note;
-                  })()}
-                  {" "}Sizes are measured from real platform round-trips. Choosing a size
-                  the platform will resize destroys the hidden data.
-                </Note>
-              </div>
-            )}
           </div>
         )}
 

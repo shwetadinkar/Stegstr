@@ -119,7 +119,7 @@ describe("desktop flow (Tauri bridge mocked)", () => {
     const { default: AppBootstrap } = await import("../App");
     render(<AppBootstrap />);
     await waitFor(() => expect(screen.getByText(/Steganography/i)).toBeTruthy(), { timeout: 5000 });
-    expect(screen.getByRole("button", { name: /detect image/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /drop an image here/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /embed image/i })).toBeTruthy();
   }, 30000);
 
@@ -168,11 +168,11 @@ describe("desktop detect shows the review dialog", () => {
 
     const { default: AppBootstrap } = await import("../App");
     render(<AppBootstrap />);
-    await waitFor(() => expect(screen.getByRole("button", { name: /detect image/i })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /drop an image here/i })).toBeTruthy());
 
     // The native picker hands back a path, as it does in the packaged app.
     openDialog.mockResolvedValueOnce("/tmp/received.jpg");
-    fireEvent.click(screen.getByRole("button", { name: /detect image/i }));
+    fireEvent.click(screen.getByRole("button", { name: /drop an image here/i }));
 
     // The dialog, not a silent merge.
     await waitFor(
