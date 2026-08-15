@@ -8,7 +8,7 @@ import { buildPointer, parsePointer, resolvePointer, PointerUnresolved } from ".
 import { profileFor } from "./stego-adaptive";
 import DetectResultModal, { type DetectedEvent } from "./DetectResultModal";
 import { verifyEvent, packForCapacity } from "./sync-engine";
-import { uint8ArrayToBase64, isLocallyHidden } from "./utils";
+import { uint8ArrayToBase64, isLocallyHidden, takeFilesFromInput } from "./utils";
 import {
   getDefaultFollowPubkeys,
   usingDefaultFollows,
@@ -2632,9 +2632,9 @@ function App({ profile }: { profile: string | null }) {
   }, [effectivePrivKey, pubkey, editName, editAbout, editPicture, editBanner, networkEnabled, canPublishToNetwork, actingIdentity?.type]);
 
   const handlePostMediaUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files?.length) return;
-    e.target.value = "";
+    // Snapshot before reset -- the order matters, see takeFilesFromInput.
+    const files = takeFilesFromInput(e.target);
+    if (!files.length) return;
 
     // Attaching uploads the file to a third-party host, so it cannot happen
     // while the app is telling the user nothing is sent. This path ignored the
@@ -2662,8 +2662,7 @@ function App({ profile }: { profile: string | null }) {
     setAttachError(null);
     try {
       const added: UploadedAttachment[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (const [i, file] of files.entries()) {
         setStatus(`Encrypting and uploading ${file.name} (${i + 1}/${files.length})…`);
         added.push(await uploadEncrypted(file, effectivePrivKey));
       }

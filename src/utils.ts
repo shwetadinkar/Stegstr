@@ -78,3 +78,27 @@ export function isLocallyHidden(
     && !viewingPubkeys.has(ev.pubkey)
     && !importedEventIds.has(ev.id);
 }
+
+/**
+ * Take the picked files off a file input and reset it, in that order.
+ *
+ * `input.files` is a **live FileList bound to the element**, not a snapshot.
+ * Resetting `input.value` -- which has to happen so that picking the same file
+ * twice still fires `change` -- empties that FileList in place. Read it
+ * afterwards and you get nothing.
+ *
+ * That is precisely how attaching broke: the length check passed with one
+ * file, the input was cleared, and the upload loop then read a length of zero
+ * and did nothing, reporting "Attached 0 file(s), 0 KB, encrypted" as a
+ * success. The order of these two lines is the whole behaviour, so it lives in
+ * one named place rather than being re-derived at each call site.
+ *
+ * Note: jsdom does NOT model the live FileList, so a test driving a real input
+ * through jsdom passes either way. The test for this uses a double that
+ * follows the browser's actual contract.
+ */
+export function takeFilesFromInput(input: HTMLInputElement): File[] {
+  const files = Array.from(input.files ?? []);
+  input.value = "";
+  return files;
+}
