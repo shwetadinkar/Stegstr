@@ -119,6 +119,11 @@ button:active { background-color: #eee; }
    -- anything in normal flow can still move it. The notice is now positioned
    absolutely, out of the flow entirely, so nothing it does can reach the
    control. */
+/* Fixed width so the switch never moves.
+   Two things used to shift it: the label changing between "OFF" and "ON", and
+   the offline notice appearing and disappearing on a full-width line inside
+   this container. The notice now renders as its own row below the header, and
+   both labels are equal width. */
 .network-toggle-wrap {
   display: flex;
   align-items: center;
@@ -130,23 +135,18 @@ button:active { background-color: #eee; }
   flex: 0 0 11rem;
 }
 .network-label { font-size: 0.9rem; font-weight: 500; }
-/* The offline notice occupies a full row of its own, so it appearing and
-   disappearing reflowed the whole header and slid the switch sideways. The row
-   is now always present and only its contents are hidden, which keeps every
-   other element still. */
-.network-off-notice {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 0.3rem;
-  width: max-content;
-  max-width: 26rem;
+/* Offline notice: its own row under the header, so it can neither shift the
+   network switch nor be clipped by the header's bounds. */
+.network-off-bar {
+  padding: 0.35rem 1rem;
   font-size: 0.75rem;
+  line-height: 1.4;
   color: #555;
-  line-height: 1.35;
-  text-align: right;
-  pointer-events: none;
+  background: #fffbe6;
+  border-bottom: 1px solid #f0e6b8;
+  text-align: center;
 }
+
 .network-toggle {
   display: inline-flex;
   align-items: center;
@@ -1089,7 +1089,7 @@ textarea { resize: vertical; min-height: 60px; }
   .modal { width: 94%; max-width: none; padding: 1rem; max-height: 88vh; overflow-y: auto; }
   .modal-wide { width: 94%; }
   .stego-drop-zone { min-height: 92px; padding: 1.5rem 1rem; }
-  .network-off-notice { display: block; width: 100%; }
+  .network-off-bar { text-align: left; }
 }
 
 @media (max-width: 480px) {
@@ -1101,3 +1101,26 @@ textarea { resize: vertical; min-height: 60px; }
 }
 
 
+
+/* Grouped choices in the embed dialog.
+   The dialog presents two independent decisions -- what to hide, and who can
+   read it -- as two pairs of radios. Rendered flat they read as one list of
+   four options, which is how they appeared on Windows: "Pick specific notes"
+   sat directly above "Open (any Stegstr user)" with nothing to separate them. */
+.embed-group {
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem 0.7rem;
+  position: relative;
+}
+.embed-group + .embed-group { margin-top: 0.6rem; }
+.embed-group-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #777;
+  margin-bottom: 0.4rem;
+}
+.embed-group label { display: inline-flex; align-items: center; gap: 0.3rem; }

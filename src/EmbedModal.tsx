@@ -225,7 +225,8 @@ export function EmbedModal({
             person" are different jobs, and only the first was possible before:
             selection was automatic, by usefulness per byte. That is the right
             default and the wrong only option. */}
-        <div className="embed-what" style={{ margin: "0.75rem 0" }}>
+        <div className="embed-what embed-group" style={{ margin: "0.75rem 0" }}>
+          <span className="embed-group-label">What to hide</span>
           <label style={{ marginRight: "1rem", cursor: "pointer" }}>
             <input
               type="radio"
@@ -309,7 +310,8 @@ export function EmbedModal({
         </div>
 
         {/* Recipient mode */}
-        <div className="embed-recipient-mode" style={{ margin: "0.75rem 0" }}>
+        <div className="embed-recipient-mode embed-group" style={{ margin: "0.75rem 0" }}>
+          <span className="embed-group-label">Who can read it</span>
           <label style={{ marginRight: "1rem" }}>
             <input type="radio" name="embed-mode" checked={recipientMode === "open"} onChange={() => onRecipientModeChange("open")} />
             {" "}Open (any Stegstr user)

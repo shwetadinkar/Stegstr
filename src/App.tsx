@@ -2915,13 +2915,7 @@ function App({ profile }: { profile: string | null }) {
               <span className="toggle-state off">OFF</span>
               <span className="toggle-state on">ON</span>
             </button>
-            <span
-              className="network-off-notice"
-              style={{ visibility: networkEnabled ? "hidden" : "visible" }}
-              title="When Network is OFF, no data is sent over the internet. Detect and Embed run entirely in your browser."
-            >
-              No internet — local only. Detect &amp; Embed stay in your browser; nothing is sent.
-            </span>
+
           </div>
           {actingIdentity && (
             <span className="acting-identity" title={`Acting as ${profiles[actingPubkey ?? ""]?.name || actingIdentity.label} (${(actingIdentity.category ?? (actingIdentity.type === "nostr" ? "nostr" : "local")) === "nostr" ? "Nostr" : "Local"})`}>
@@ -2943,6 +2937,17 @@ function App({ profile }: { profile: string | null }) {
           {relayStatus && <span className="relay-status">{relayStatus}</span>}
         </div>
       </header>
+
+      {/* Offline notice as its own row rather than inside the header.
+          Inside it, this text either moved the network switch when it appeared
+          (it occupied a full-width line, so mounting it reflowed the header) or,
+          once positioned absolutely to stop that, got clipped by the header's
+          bounds. A row of its own has neither problem. */}
+      {!networkEnabled && (
+        <div className="network-off-bar" title="Detect and Embed run entirely on this machine.">
+          No internet — local only. Detect &amp; Embed stay in your browser; nothing is sent.
+        </div>
+      )}
 
       {view === "feed" && (
         <div className="search-bar-wrap">
