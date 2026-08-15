@@ -1170,8 +1170,15 @@ export async function encodeQimImageFile(
   const lumaAcCount = options?.lumaAcCount ?? prof?.lumaAcCount;
   const slotOrder = options?.slotOrder ?? prof?.slotOrder;
   const repeat = options?.repeat ?? prof?.repeat;
+  // activityBand was declarable on a profile and read from nowhere, so setting
+  // it there did nothing whatsoever -- the encoder always used the default
+  // band. That is worse than the field not existing: it reads as a working
+  // switch, and any evaluation of the band done by setting it on a profile
+  // would have compared an image against an identical image.
+  const activityBand = options?.activityBand ?? prof?.activityBand;
   const result = await embedQim(jpegBytes, payload, {
     ...options, delta, chromaDelta, chromaChannels, rsNsym, lumaAcCount, slotOrder, repeat,
+    activityBand,
   });
   return new Blob([result], { type: "image/jpeg" });
 }
@@ -1212,8 +1219,18 @@ export async function decodeQimImageFile(
       // rsNsym 32 (§15.13): the self-test would still pass, because that path
       // knows the profile, so the image would only fail once someone tried to
       // read it back.
+      //
+      // activityBand belongs in this list for the same reason. It decides
+      // which coefficients set each block's step, so embedding on "mid" and
+      // blind-decoding on "high" reads the right positions with the wrong
+      // steps and never succeeds -- and unlike lumaAcCount it is invisible in
+      // the stream layout, so nothing downstream would hint at the cause. A
+      // profile that sets ONLY activityBand must still be tried as a whole
+      // bundle, hence the third clause: without it such a profile would fall
+      // through to phase 3, which passes delta alone.
       const zigzagCandidates = Object.values(PLATFORM_PROFILES).filter(
-        (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined) && p.chromaDelta === undefined,
+        (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined || p.activityBand !== undefined)
+          && p.chromaDelta === undefined,
       );
       // Phase 3: plain luma-only sweep, full AC range, chroma disabled --
       // backward compatible with images made before this change and other
@@ -1229,6 +1246,7 @@ export async function decodeQimImageFile(
         result = await detectQim(jpegBytes, {
           ...options, delta: prof.delta, chromaDelta: prof.chromaDelta,
           chromaChannels: prof.chromaChannels, rsNsym: prof.rsNsym, lumaAcCount: prof.lumaAcCount,
+          activityBand: prof.activityBand,
         });
         if (result && result.length > 0) break;
       }
@@ -1249,7 +1267,7 @@ export async function decodeQimImageFile(
             onProgress?.(`zigzag delta ${prof.delta} (${slotOrder})`, attemptNum, totalAttempts);
             result = await detectQim(jpegBytes, {
               ...options, delta: prof.delta, lumaAcCount: prof.lumaAcCount, rsNsym: prof.rsNsym,
-              slotOrder, repeat: prof.repeat,
+              slotOrder, repeat: prof.repeat, activityBand: prof.activityBand,
             });
             if (result && result.length > 0) break;
           }

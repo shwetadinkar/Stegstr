@@ -139,4 +139,77 @@ describe("adaptive ladder band", () => {
       expect(`${name}:${prof.activityBand ?? "high"}`).toBe(`${name}:high`);
     }
   });
+
+  /**
+   * The band was declarable on a profile and read from nowhere.
+   *
+   * encodeQimImageFile maps profile fields onto QimOptions one at a time --
+   * delta, chromaDelta, rsNsym, lumaAcCount, slotOrder, repeat -- and
+   * activityBand was simply missing from that list. So a profile setting
+   * `activityBand: "mid"` embedded on the default band regardless, and the
+   * switch did nothing whatsoever.
+   *
+   * That is worse than the field not existing. The point of §19.6 is to
+   * evaluate the alternative band on a real photo, and the obvious way to run
+   * that evaluation is to set it on a profile and look at the output -- which
+   * would have compared an image against a byte-identical image and concluded
+   * the band changes nothing.
+   */
+  it("a profile's band actually reaches the encoder", async () => {
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    const { encodeQimImageFile } = await import("../stego-qim");
+
+    const NAME = "__band_probe__";
+    PLATFORM_PROFILES[NAME] = { ...PLATFORM_PROFILES.universal, activityBand: "mid" };
+    try {
+      const cover = new File([makeCoverJpeg(1200, 900, 11)], "c.jpg", { type: "image/jpeg" });
+      const text = JSON.stringify({ version: 1, events: [], note: "band via profile" });
+      const viaProfile = new Uint8Array(
+        await (await encodeQimImageFile(cover, text, { platform: NAME })).arrayBuffer(),
+      );
+      const viaDefault = new Uint8Array(
+        await (await encodeQimImageFile(cover, text, { platform: "universal" })).arrayBuffer(),
+      );
+      // Same cover, same payload, same profile in every respect but the band.
+      expect(Array.from(viaProfile)).not.toEqual(Array.from(viaDefault));
+    } finally {
+      delete PLATFORM_PROFILES[NAME];
+    }
+  }, 300000);
+
+  /**
+   * End to end through the path a recipient actually takes, with no delta
+   * pinned. Weaker than it looks, and worth saying so.
+   *
+   * The blind sweep now passes activityBand alongside the other profile
+   * fields, which is the prerequisite §19.6 records. But this test does not
+   * isolate that change: measured with the sweep edit reverted, a mid-band
+   * image still decoded, because a *different* profile in the sweep (delta 56)
+   * recovered it exactly. So this asserts the round trip works, not that the
+   * sweep needs the band. The direct evidence that the band must be declared
+   * is "decoding with the wrong band fails" above, where nothing comes back.
+   *
+   * The incidental finding is reassuring: that cross-profile recovery returned
+   * the payload byte-exact rather than plausible garbage, which is precisely
+   * what the magic bytes plus Reed-Solomon exist to guarantee.
+   */
+  it("round-trips through the blind decode path", async () => {
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    const { encodeQimImageFile, decodeQimImageFile } = await import("../stego-qim");
+
+    const NAME = "__band_probe__";
+    PLATFORM_PROFILES[NAME] = { ...PLATFORM_PROFILES.universal, activityBand: "mid" };
+    try {
+      const cover = new File([makeCoverJpeg(1200, 900, 11)], "c.jpg", { type: "image/jpeg" });
+      const text = JSON.stringify({ version: 1, events: [], note: "band round trip" });
+      const blob = await encodeQimImageFile(cover, text, { platform: NAME });
+      const stego = new File([await blob.arrayBuffer()], "s.jpg", { type: "image/jpeg" });
+
+      const out = await decodeQimImageFile(stego);
+      expect(out.ok).toBe(true);
+      expect(out.payload).toBe(text);
+    } finally {
+      delete PLATFORM_PROFILES[NAME];
+    }
+  }, 300000);
 });
