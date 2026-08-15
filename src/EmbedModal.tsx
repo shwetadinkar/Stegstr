@@ -30,7 +30,7 @@ function Note({ label, children }: { label: string; children: React.ReactNode })
 // (downscaled to 1600, same result).
 const PLATFORM_LABELS: Record<string, string> = {
   whatsapp_standard: "WhatsApp (1600px, HD included)",
-  whatsapp_hd: "Large (4096px) — X/Twitter, WhatsApp with HD ON — 6x capacity",
+  whatsapp_hd: "Large (4096px) — X/Twitter, WhatsApp HD — 6x capacity",
   telegram_photo: "Telegram as photo, iMessage (1280px)",
   telegram_photo_1600: "Telegram test - old 1600px (resampled by Telegram)",
   telegram_file: "Telegram, as file (no resize, biggest capacity)",
@@ -38,7 +38,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook (2048px)",
   twitter: "X / Twitter (4096px — 6x capacity, keeps dimensions)",
   imessage: "iMessage (1280px)",
-  universal: "Universal (1600px) — safe on WhatsApp, X/Twitter, Facebook",
+  universal: "Universal (1600px) — WhatsApp, X/Twitter, Facebook",
   instagram_d40: "Instagram test - step 40",
   instagram_d44: "Instagram test - step 44",
   instagram_d48: "Instagram test - step 48",

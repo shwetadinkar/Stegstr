@@ -235,7 +235,36 @@ Uploads are signed, so you must be logged in, and they go to a host, so Network 
 
 ---
 
-## Command-line interface (CLI)
+## Command-line interface (CLI) — legacy
+
+**Read this before using it.** The CLI is an older, separate implementation and
+**does not produce images that survive chat apps.** It embeds in the LSB of
+wavelet detail coefficients and writes PNG; WhatsApp, Telegram-as-photo,
+Instagram, Facebook and X all re-encode uploads to JPEG, and JPEG quantisation
+discards exactly the detail those bits live in.
+
+Everything this fork measured — the platform geometry, the 4096px capacity, the
+step size — belongs to the **QIM** encoder, which the app and the MCP server
+use. The CLI does not share it.
+
+| | survives a chat app | notes |
+|---|---|---|
+| App (browser or desktop) | **yes** | QIM in JPEG DCT, measured on real devices |
+| MCP server | **yes** | same encoder as the app |
+| CLI | **no** | PNG only, for direct file transfer |
+
+**Use the CLI when the file will not be re-encoded** — Telegram *sent as a
+file*, email attachments, USB, cloud storage. PNG is lossless, so the bytes
+arrive exactly as sent and the payload is intact.
+
+**For anything going through a chat app, use the [MCP server](#for-ai-agents-mcp)**,
+which exposes the same encoder the app uses and takes a platform target.
+
+> Not yet measured: we have not sent a CLI-made PNG through a platform and
+> recorded the result. The reasoning above follows from how those pipelines
+> behave, and matches how the JPEG-domain encoder was arrived at, but it is an
+> inference rather than a measurement — and this project has been wrong that way
+> before. Treat the "no" as strong expectation, not a number.
 
 You need [Rust](https://rustup.rs) (latest stable):
 
