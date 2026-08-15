@@ -29,6 +29,46 @@ function createFileInput(accept: string): Promise<File | null> {
 }
 
 /** Pick one image file (for detect or embed). */
+/**
+ * Read a file path into a File. Desktop only -- the browser has no such thing.
+ *
+ * Exists so the desktop build can hand a File to the same code the browser
+ * uses. Every desktop-specific stego path in this app has diverged from the
+ * browser one and rotted, because only the browser path was ever exercised.
+ * The cure is to have one implementation and adapt the input at the edge.
+ */
+export async function fileFromPath(path: string): Promise<File> {
+  const { getTauri } = await import("./platform-desktop");
+  const tauri = await getTauri();
+  const b64 = await tauri.invoke<string>("read_file_base64", { path });
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const name = path.replace(/^.*[/\\]/, "") || "image";
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  return new File([bytes], name, { type });
+}
+
+/**
+ * Ask the user for an image, on either platform, and return it as a File.
+ *
+ * The browser uses an <input type="file">; the desktop uses the native dialog
+ * and then reads the chosen path. Callers get a File either way and need no
+ * platform branch of their own.
+ */
+export async function openImageFile(): Promise<File | null> {
+  if (isWeb()) return pickImageFile();
+  const { getTauri } = await import("./platform-desktop");
+  const tauri = await getTauri();
+  const chosen = await tauri.openDialog({
+    multiple: false,
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] }],
+  });
+  if (!chosen || typeof chosen !== "string") return null;
+  return fileFromPath(chosen);
+}
+
 export function pickImageFile(): Promise<File | null> {
   return createFileInput("image/png,image/jpeg,image/gif,image/webp,image/bmp");
 }

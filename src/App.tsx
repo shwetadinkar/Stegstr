@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import * as Nostr from "./nostr-stub";
-import { isWeb, pickImageFile, decodeStegoFile, encodeStegoToBlob, saveBlob } from "./platform-web";
+import { isWeb, decodeStegoFile, encodeStegoToBlob, saveBlob, fileFromPath, openImageFile } from "./platform-web";
 import { getDotCapacityForFile } from "./stego-dot-web";
 import { getTauri } from "./platform-desktop";
 import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls, fetchEventById, publishAndConfirm } from "./net-adapter";
@@ -1275,18 +1275,41 @@ function App({ profile }: { profile: string | null }) {
       detectStateRef.current;
     setDecodeError("");
     setStegoLogs([]);
-    if (isWeb()) {
+    {
+      // ONE detect implementation, on every platform.
+      //
+      // There used to be two: this one for the browser, and a separate
+      // path-based one for desktop. They drifted, and the desktop copy never
+      // got the review dialog -- so on desktop, opening any image merged its
+      // entire contents into the feed unreviewed and switched the view to
+      // Global to make them visible. That is precisely the behaviour the review
+      // dialog was built to prevent: anyone can send you a photo, and opening
+      // one must not be enough to write to your feed.
+      //
+      // The input differs by platform, not the logic. Resolve to a File here
+      // -- from a drop, a path, or a picker -- and everything downstream is
+      // shared, so a fix can no longer reach one platform and miss the other.
       let file: File | null;
       if (providedPathOrFile instanceof File) {
         file = providedPathOrFile;
         addStegoLog(`Dropped file: ${file.name}`);
-      } else if (providedPathOrFile !== undefined && providedPathOrFile !== null) {
-        return;
+      } else if (typeof providedPathOrFile === "string" && providedPathOrFile) {
+        setDetecting(true);
+        try {
+          file = await fileFromPath(providedPathOrFile);
+          addStegoLog(`Selected: ${providedPathOrFile}`);
+        } catch (e) {
+          setDecodeError(`Could not read ${providedPathOrFile}: ${e instanceof Error ? e.message : String(e)}`);
+          setDetecting(false);
+          return;
+        } finally {
+          setDetecting(false);
+        }
       } else {
         setDetecting(true);
         addStegoLog("Opening file picker...");
         try {
-          file = await pickImageFile();
+          file = await openImageFile();
         } finally {
           setDetecting(false);
         }
@@ -1478,194 +1501,6 @@ function App({ profile }: { profile: string | null }) {
       }
       return;
     }
-    let path: string | null;
-    const tauri = await getTauri();
-    if (providedPathOrFile === undefined || typeof providedPathOrFile !== "string") {
-      setDetecting(true);
-      try {
-        path = await tauri.openDialog({
-          multiple: false,
-          filters: [
-            { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] },
-            { name: "PNG", extensions: ["png"] },
-            { name: "JPEG", extensions: ["jpg", "jpeg"] },
-          ],
-        });
-      } finally {
-        setDetecting(false);
-      }
-      if (!path || typeof path !== "string") {
-        setStatus("Cancelled");
-        logger.logAction("detect_cancelled", "User cancelled detect file dialog");
-        return;
-      }
-    } else {
-      path = providedPathOrFile;
-      if (!path || typeof path !== "string") return;
-    }
-    setDetecting(true);
-    addStegoLog(`Selected: ${path}`);
-    logger.logAction("detect_started", "Decoding stego image", { path });
-    try {
-      const isJpeg = /\.jpe?g$/i.test(path);
-      let result: { ok: boolean; payload?: string; error?: string };
-      setStegoProgress("Extracting hidden data (Dot decode)...");
-      addStegoLog("Running Dot steganography decode...");
-      console.log("[Detect] Trying Dot decode first:", path);
-      result = await tauri.invoke<{ ok: boolean; payload?: string; error?: string }>("decode_stego_dot", { path });
-      console.log("[Detect] Dot result: ok=", result.ok, "error=", result.error ?? "(none)");
-      if (!result.ok) {
-        addStegoLog(`Dot decode failed: ${result.error ?? "unknown error"}`);
-        if (isJpeg) {
-          // QIM decode runs in TypeScript, not through the Rust command.
-          //
-          // `decode_stego_qim` shells out to channel_simulator/qim_cli.py and
-          // resolves it via env!("CARGO_MANIFEST_DIR") -- the BUILD machine's
-          // directory. Every installed copy therefore looked for the script
-          // under the CI runner's path and failed, and it needed Python with
-          // jpeglib/reedsolo/numpy besides. The desktop build could never
-          // decode a QIM image.
-          //
-          // The webview has OffscreenCanvas, so the same decoder the browser
-          // and the tests use runs here unmodified.
-          addStegoLog("Falling back to QIM decode (JPEG)...");
-          try {
-            const b64 = await tauri.invoke<string>("read_file_base64", { path });
-            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-            const file = new File([bytes], path.replace(/^.*[/\\]/, ""), { type: "image/jpeg" });
-            const out = await decodeQimImageFile(file, {
-              onProgress: (label, n, total) =>
-                setStegoProgress(`Trying ${label} (${n}/${total})...`),
-            });
-            result = { ok: out.ok, payload: out.payload, error: out.error };
-          } catch (e) {
-            result = { ok: false, error: `QIM decode failed: ${e instanceof Error ? e.message : String(e)}` };
-          }
-        } else {
-          addStegoLog("Falling back to DWT decode (PNG/other)...");
-          console.log("[Detect] PNG/other: falling back to DWT decode:", path);
-          result = await tauri.invoke<{ ok: boolean; payload?: string; error?: string }>("decode_stego_image", { path });
-          console.log("[Detect] DWT result: ok=", result.ok, "error=", result.error ?? "(none)");
-        }
-      }
-      if (!result.ok || !result.payload) {
-        const err = result.error || "Decode failed";
-        addStegoLog(`FAIL: ${err}`);
-        setDecodeError(err);
-        logger.logAction("detect_error", err, { path });
-        return;
-      }
-      addStegoLog(`Dot decode OK! Payload: ${result.payload.length} chars`);
-      let jsonString: string;
-      const raw = result.payload;
-      if (raw.startsWith("base64:")) {
-        const bytes = Uint8Array.from(atob(raw.slice(7)), (c) => c.charCodeAt(0));
-        if (!stegoCrypto.isEncryptedPayload(bytes)) {
-          addStegoLog("FAIL: Not a Stegstr encrypted image");
-          setDecodeError("Not a Stegstr encrypted image");
-          logger.logAction("detect_error", "Not a Stegstr encrypted image", { path });
-          return;
-        }
-        let keysToTry = identities
-          .filter((i) => viewingPubkeys.has(Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex))))
-          .map((i) => i.privKeyHex);
-        if (keysToTry.length === 0) keysToTry = [effectivePrivKey];
-        let lastErr: Error | null = null;
-        jsonString = "";
-        for (const key of keysToTry) {
-          try {
-            jsonString = await stegoCrypto.decryptPayload(bytes, key);
-            lastErr = null;
-            break;
-          } catch (e) {
-            lastErr = e instanceof Error ? e : new Error(String(e));
-          }
-        }
-        if (!jsonString && lastErr) {
-          try {
-            jsonString = await stegoCrypto.decryptApp(bytes);
-            const parsed = JSON.parse(jsonString);
-            if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed.events)) lastErr = null;
-          } catch (_) {}
-        }
-        if (!jsonString) throw lastErr ?? new Error("Decryption failed");
-      } else if (raw.trimStart().startsWith("{")) {
-        jsonString = raw;
-      } else {
-        setDecodeError("Invalid payload");
-        logger.logAction("detect_error", "Invalid payload", { path });
-        return;
-      }
-      // See the browser detect path above: a pointer image decrypts to a
-      // pointer, and the content it names has to be fetched first.
-      jsonString = await followPointerIfAny(jsonString, effectivePrivKey, addStegoLog, networkEnabled);
-      const bundle = JSON.parse(jsonString) as NostrStateBundle;
-      if (!Array.isArray(bundle.events)) {
-        setDecodeError("Invalid payload");
-        logger.logAction("detect_error", "Invalid payload (events not array)", { path });
-        return;
-      }
-      const normalized = bundle.events.map((e) => ({
-        ...e,
-        kind: typeof e.kind === "number" ? e.kind : parseInt(String(e.kind), 10) || 1,
-        created_at: typeof e.created_at === "number" ? e.created_at : Math.floor(Date.now() / 1000),
-      }));
-      setEvents((prev) => {
-        const byId = new Map(prev.map((e) => [e.id, e]));
-        normalized.forEach((e) => byId.set(e.id, e));
-        return Array.from(byId.values()).sort((a, b) => b.created_at - a.created_at);
-      });
-      const profileUpdates: Record<string, ProfileData> = {};
-      bundle.events.filter((e) => e.kind === 0).forEach((e) => {
-        try {
-          const raw = JSON.parse(e.content) as { name?: string; display_name?: string; about?: string; picture?: string; banner?: string; nip05?: string };
-          profileUpdates[e.pubkey] = {
-            name: raw.name ?? raw.display_name,
-            about: raw.about,
-            picture: raw.picture,
-            banner: raw.banner,
-            nip05: raw.nip05,
-          };
-        } catch (_) {}
-      });
-      if (Object.keys(profileUpdates).length > 0) {
-        setProfiles((p) => ({ ...p, ...profileUpdates }));
-      }
-      setImportedEventIds((prev) => {
-        const next = new Set(prev);
-        bundle.events.forEach((e) => next.add(e.id));
-        if (next.size > 2000) {
-          const arr = [...next];
-          arr.splice(0, arr.length - 2000);
-          return new Set(arr);
-        }
-        return next;
-      });
-      setView("feed");
-      setFeedFilter("global");
-      setSearchQuery("");
-      setStatus(`Loaded ${bundle.events.length} events`);
-      addStegoLog(`SUCCESS - Loaded ${bundle.events.length} events!`);
-      logger.logAction("detect_completed", `Loaded ${bundle.events.length} events`, { path, eventCount: bundle.events.length });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // A pointer that would not resolve is not a decode failure and must not
-      // be dressed up as one -- its message already says what went wrong and
-      // what to do about it.
-      const isTauriBridgeError =
-        !(e instanceof PointerUnresolved) &&
-        /undefined.*invoke|__TAURI_INTERNALS__/i.test(String(msg));
-      setDecodeError(
-        isTauriBridgeError
-          ? "Detect requires the Stegstr desktop app. Run: npm run tauri dev (not in a browser)"
-          : msg
-      );
-      if (e instanceof PointerUnresolved) addStegoLog(`Pointer unresolved: ${msg}`);
-      logger.logError("Detect failed", e, { path });
-    } finally {
-      setDetecting(false);
-      setStegoProgress("");
-    }
   }, [effectivePrivKey, identities, viewingPubkeys, addStegoLog, networkEnabled]);
 
   useEffect(() => {
@@ -1685,7 +1520,7 @@ function App({ profile }: { profile: string | null }) {
   const handleSaveToImage = useCallback(() => {
     setDecodeError("");
     setStegoLogs([]);
-    if (isWeb()) setEmbedCoverFile(null);
+    setEmbedCoverFile(null);
     setEmbedModalOpen(true);
   }, []);
 
@@ -2945,7 +2780,7 @@ function App({ profile }: { profile: string | null }) {
           bounds. A row of its own has neither problem. */}
       {!networkEnabled && (
         <div className="network-off-bar" title="Detect and Embed run entirely on this machine.">
-          No internet — local only. Detect &amp; Embed stay in your browser; nothing is sent.
+          No internet — local only. Detect &amp; Embed run {isWeb() ? "in your browser" : "on this machine"}; nothing is sent.
         </div>
       )}
 
@@ -3252,16 +3087,9 @@ function App({ profile }: { profile: string | null }) {
                   setDecodeError("Please drop an image file (e.g. PNG).");
                   return;
                 }
-                if (isWeb()) {
-                  handleLoadFromImage(file);
-                  return;
-                }
-                const filePath = (file as File & { path?: string }).path;
-                if (!filePath) {
-                  setDecodeError("Drop failed: file path not available.");
-                  return;
-                }
-                handleLoadFromImage(filePath);
+                // Both platforms: the handler takes a File and resolves
+                // paths itself, so there is nothing platform-specific to do.
+                handleLoadFromImage(file);
               }}
             >
               <strong>Drop image here to detect</strong>
