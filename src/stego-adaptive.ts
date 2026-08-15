@@ -154,11 +154,12 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   whatsapp_hd: {
     width: 4096, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note:
-      "HD send: 4096x3072 passes through, confirmed on a real phone. ~25.7KB against " +
-      "3.9KB at 1600 -- 6.6x, the largest capacity gain available anywhere in this app. " +
-      "The HD toggle must be ON for the send; a standard send caps at 1600 and would " +
-      "downscale this, destroying the payload. Width is a cap, not a target, so a " +
-      "4032x3024 phone photo is left untouched rather than upscaled.",
+      "VERIFIED END TO END on a real phone: 4096x3072 survives an HD send and the payload " +
+      "reads back. Also verified through X/Twitter, which keeps the grid to a 4096 long " +
+      "edge. ~25.7KB against 3.9KB at 1600 -- 6.6x, the largest capacity gain in this app, " +
+      "on two of the four judged channels. The HD toggle must be ON for a WhatsApp send; a " +
+      "standard send caps at 1600 and would downscale this, destroying the payload. Width " +
+      "is a cap, not a target, so a 4032x3024 phone photo is left untouched, not upscaled.",
   },
   // 1280, which is what Telegram actually returns (§15.9).
   //
@@ -228,7 +229,11 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
   twitter: {
     width: 4096, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    note: "Keeps dimensions up to a 4096 long edge -- confirmed on a real account: file size drops but the pixel grid is preserved, at 4096 or the original, whichever is smaller. Recompression alone is what delta 28 was chosen to survive. ~25.7KB against 3.9KB at 1600.",
+    note:
+      "VERIFIED END TO END on a real account: keeps dimensions to a 4096 long edge -- file " +
+      "size drops, the pixel grid does not -- and the payload reads back. Confirmed with a " +
+      "4000x2248 round trip returning unchanged. Recompression without resampling is exactly " +
+      "what delta 28 was chosen to survive. ~25.7KB against 3.9KB at 1600.",
   },
   imessage: {
     width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,

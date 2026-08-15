@@ -1,7 +1,7 @@
 # What this fork changes
 
 Against upstream `brunkstr/Stegstr` at fork point: **79 commits, 233 files,
-+21,311 / −875 lines.** 284 tests, `tsc --noEmit` clean, `npm run build` clean.
++21,311 / −875 lines.** 335 tests, `tsc --noEmit` clean, `npm run build` clean.
 
 The organising claim: **an image only carries hidden data through a chat app if
 the encoder is matched to what that specific app does to photos.** Everything
@@ -24,15 +24,54 @@ block boundaries and reads noise. Every catastrophic failure observed measured
 
 | Platform | Measured behaviour | Ships as |
 |---|---|---|
-| WhatsApp | caps width at 1600; at or below, passes through untouched | 1600×1200 |
+| **WhatsApp, HD send** | **carries 4096×3072 intact** | **4096 long edge** |
+| **X/Twitter** | **keeps dimensions to a 4096 long edge; file size drops, the pixel grid does not** | **4096 long edge** |
+| WhatsApp, standard send | caps width at 1600; at or below, passes through untouched | 1600×1200 |
 | Telegram, as photo | re-encodes **every** photo to 1280×960 | 1280×960 |
 | Telegram, as file | no recompression at all | no resize |
 | Instagram | normalises everything to a 1440 square | 1440×1440 |
 
+### The largest capacity finding
+
+WhatsApp HD and X/Twitter both preserve the pixel grid up to a 4096 long edge —
+verified end to end on a real device, payload read back. They re-compress, and
+re-compression without resampling is exactly what `delta 28` was chosen to
+survive.
+
+```
+1600×1200    3,911 bytes
+4096×3072   25,766 bytes     6.6×
+```
+
+**That is 6.6× the payload on two of the four judged channels**, self-contained,
+with no relay and no pointer. It is not the default, because choosing it wrongly
+is a total loss rather than a degradation: over a *standard* WhatsApp send a
+4096px image is downscaled to 1600 and the payload is destroyed.
+
+The record here was wrong about this twice in opposite directions — the profile
+first shipped at 4096 and destroyed payloads, was clamped to 1600, and was
+annotated "HD uploads cap at the same 1600px" as though measured. The original
+failure is consistent with HD-sized images sent over a *standard* send. A failed
+measurement says the configuration failed, not why.
+
+### Portrait covers never worked, on any platform
+
+`coverGeometry` capped **width** only, so a portrait cover came out taller than
+the platform allows — 1600×2133 against a 1600 cap became 1600×2128 — and the
+platform then downscaled it, resampling the 8×8 grid. Total loss, ~50% BER.
+
+Invisible because every phone test used a landscape photo, where width *is* the
+long edge. The symptom was "the recipient's app finds nothing", which points
+nowhere near orientation. Now capped on the long edge, with a test pinning that
+landscape geometry is byte-for-byte unchanged.
+
 **Upstream shipped `instagram: 1080`, and it was the default.** 1080 is upscaled
 to Instagram's 1440 canvas, which measured 42–50% bit error: nothing recovered,
-ever. `whatsapp_hd: 4096` had the same problem in the other direction —
-downscaled to 1600, payload destroyed. Both are fixed.
+ever. `whatsapp_hd: 4096` was long believed to have the same problem in the
+other direction, and was clamped to 1600 on that basis — but as recorded above,
+4096 is correct for an HD send and the original failure was a *standard* send
+downscaling it. The Instagram fix stands; the WhatsApp one was itself a
+mis-diagnosis, now corrected.
 
 Upstream's own `docs/WHATSAPP_PLAN.md` records QIM passing the simulator and
 throwing `ReedSolomonError: Too many errors` on a real phone. The cause was the

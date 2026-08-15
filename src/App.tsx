@@ -1794,10 +1794,20 @@ function App({ profile }: { profile: string | null }) {
               `Cover too small: envelope alone is ${empty.length}B, ` +
               `capacity is ${maxPayloadBytes}B. Use a larger cover image.`,
             );
+            // Point at the 4096 profile when they are not already on it.
+            // "Try a larger photo" is only half the answer: the target
+            // platform caps the size far below what X/Twitter and a WhatsApp
+            // HD send actually carry, both verified end to end at ~25 KB
+            // against 3.9 KB at 1600.
+            const targetWidth = profileFor(targetPlatform).width;
+            const canGoBigger = (targetWidth || Infinity) < 4096;
             setDecodeError(
               `This image is too small. It holds about ${Math.floor(maxPayloadBytes / 1024)} KB, ` +
               `but the encrypted bundle needs at least ${Math.ceil(empty.length / 1024)} KB. ` +
-              `Try a larger photo.`,
+              (canGoBigger
+                ? `Try a larger photo — or switch the target to "Large (4096px)", which carries ` +
+                  `about 6x as much and is verified through X/Twitter and WhatsApp with HD on.`
+                : `Try a larger photo, or turn on "Send a link instead" to carry a ~260-byte pointer.`),
             );
             return null;
           }

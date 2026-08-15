@@ -104,15 +104,18 @@ A good rule of thumb: if the photo looks "busy", it's a good cover.
 
 Every platform resizes and re-compresses photos differently. Choosing the right target sets the geometry and encoder settings that survive that specific pipeline.
 
-| Send it through | Choose | What the app does |
-|---|---|---|
-| WhatsApp | **Universal** | 1600×1200 — WhatsApp passes this through untouched |
-| Telegram, as a photo | **Telegram, as photo** | 1280×960 — Telegram re-encodes every photo to this |
-| Telegram, as a file | **Telegram, as file** | No resize — largest capacity, best quality |
-| Instagram | **Instagram** | 1440×1440 square — Instagram normalises everything to this |
-| Facebook / Twitter | **Universal** | 1600px |
+| Send it through | Choose | What the app does | Carries |
+|---|---|---|---|
+| **X/Twitter** | **Large (4096px)** | Keeps your image's own size up to a 4096 long edge | **~25 KB** |
+| **WhatsApp, HD toggle ON** | **Large (4096px)** | Same — an HD send carries 4096×3072 intact | **~25 KB** |
+| WhatsApp, normal send | **Universal** | 1600×1200 — passed through untouched | ~3.9 KB |
+| Facebook | **Facebook HD** | 2048px | ~6.4 KB |
+| Telegram, as a photo | **Telegram as photo** | 1280×960 — Telegram re-encodes every photo to this | ~2.5 KB |
+| Telegram, as a file | **Telegram, as file** | No resize — largest capacity of all | biggest |
+| Instagram | **Instagram** | 1440×1440 square — Instagram normalises everything to this | ~3 KB |
+| Not sure / may be forwarded | **Universal** | 1600px, safe on every channel above | ~3.9 KB |
 
-**Universal** also covers Twitter and Facebook, so it's the right default when you're not sure or the image may be forwarded onward.
+**Large (4096px) carries about six times as much**, and both channels are verified end to end on a real device. It is not the default because getting it wrong is expensive: sent over a *normal* WhatsApp send, a 4096px image is downscaled to 1600 and the hidden data is destroyed completely. Use it when you know the channel; use **Universal** when you don't.
 
 **Getting this wrong is the main reason hidden data disappears.** If a platform resizes your image, the data goes with it. Matching the platform's own output size is what keeps it intact.
 
