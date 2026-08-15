@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import * as Nostr from "./nostr-stub";
-import { isWeb, pickImageFile } from "./platform-web";
+import { pickImageFile } from "./platform-web";
 import { getQimCapacityForFile } from "./stego-qim";
 import { PLATFORM_PROFILES, profileFor, USER_PLATFORMS } from "./stego-adaptive";
 import { getDotCapacityForFile } from "./stego-dot-web";
@@ -188,8 +188,12 @@ export function EmbedModal({
           screenshots and logos give it nowhere to hide.
         </Note>
 
-        {/* Cover image picker */}
-        {isWeb() && (
+        {/* Cover image picker.
+            Was gated on isWeb(), which left the desktop build with no way to
+            choose an image at all -- the one control the whole dialog exists
+            for. An HTML file input works inside the webview, so there is no
+            reason for the guard. */}
+        {(
           <div className="embed-cover-web" style={{ margin: "0.75rem 0" }}>
             <button
               type="button"
@@ -481,7 +485,7 @@ export function EmbedModal({
         )}
         <div className="row modal-actions">
           <button type="button" onClick={onClose} disabled={embedding}>Cancel</button>
-          <button type="button" onClick={onConfirm} className="btn-primary" disabled={embedding || (isWeb() && !embedCoverFile)}>
+          <button type="button" onClick={onConfirm} className="btn-primary" disabled={embedding || !embedCoverFile}>
             {embedding ? "Embedding..." : "Embed"}
           </button>
         </div>

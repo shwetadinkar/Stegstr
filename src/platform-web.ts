@@ -77,6 +77,44 @@ export async function encodeStegoToBlob(coverFile: File, payload: string): Promi
 }
 
 /** Trigger download of a blob with the given filename. */
+/**
+ * Save a produced image.
+ *
+ * In a browser this is an <a download> click. In the desktop app that is not
+ * reliable -- the webview may block it or drop it somewhere unannounced -- and
+ * a user who clicks Embed and cannot find the file has, from their side, an app
+ * that does nothing. So on desktop this asks where to save and writes the bytes
+ * through Rust, then reports the real path.
+ */
+export async function saveBlob(blob: Blob, filename: string): Promise<string | null> {
+  if (isWeb()) {
+    downloadBlob(blob, filename);
+    return null;
+  }
+  const { getTauri } = await import("./platform-desktop");
+  const tauri = await getTauri();
+  const ext = (filename.match(/\.([^.]+)$/)?.[1] ?? "jpg").toLowerCase();
+  let defaultPath = filename;
+  try {
+    const desktop = await tauri.invoke<string>("get_desktop_path");
+    if (desktop) defaultPath = `${desktop}/${filename}`;
+  } catch { /* fall back to a bare filename */ }
+  const chosen = await tauri.saveDialog({
+    defaultPath,
+    filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+  });
+  if (!chosen || typeof chosen !== "string") return null;
+  const path = chosen.toLowerCase().endsWith(`.${ext}`) ? chosen : `${chosen}.${ext}`;
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+  }
+  await tauri.invoke("write_file_base64", { path, data: btoa(bin) });
+  return path;
+}
+
 export function downloadBlob(blob: Blob, filename: string): void {
   try {
     console.log("[platform-web] downloadBlob: blob size=", blob.size, "filename=", filename);

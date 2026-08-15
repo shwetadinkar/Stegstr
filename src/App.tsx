@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import * as Nostr from "./nostr-stub";
-import { isWeb, pickImageFile, decodeStegoFile, encodeStegoToBlob, downloadBlob } from "./platform-web";
+import { isWeb, pickImageFile, decodeStegoFile, encodeStegoToBlob, saveBlob } from "./platform-web";
 import { getDotCapacityForFile } from "./stego-dot-web";
 import { getTauri } from "./platform-desktop";
 import { connectRelays, publishEvent, DEFAULT_RELAYS, getRelayUrls, fetchEventById, publishAndConfirm } from "./net-adapter";
@@ -1517,10 +1517,30 @@ function App({ profile }: { profile: string | null }) {
       if (!result.ok) {
         addStegoLog(`Dot decode failed: ${result.error ?? "unknown error"}`);
         if (isJpeg) {
+          // QIM decode runs in TypeScript, not through the Rust command.
+          //
+          // `decode_stego_qim` shells out to channel_simulator/qim_cli.py and
+          // resolves it via env!("CARGO_MANIFEST_DIR") -- the BUILD machine's
+          // directory. Every installed copy therefore looked for the script
+          // under the CI runner's path and failed, and it needed Python with
+          // jpeglib/reedsolo/numpy besides. The desktop build could never
+          // decode a QIM image.
+          //
+          // The webview has OffscreenCanvas, so the same decoder the browser
+          // and the tests use runs here unmodified.
           addStegoLog("Falling back to QIM decode (JPEG)...");
-          console.log("[Detect] JPEG: falling back to QIM decode:", path);
-          result = await tauri.invoke<{ ok: boolean; payload?: string; error?: string }>("decode_stego_qim", { path });
-          console.log("[Detect] QIM result: ok=", result.ok, "error=", result.error ?? "(none)", "payloadLen=", result.payload?.length ?? 0);
+          try {
+            const b64 = await tauri.invoke<string>("read_file_base64", { path });
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            const file = new File([bytes], path.replace(/^.*[/\\]/, ""), { type: "image/jpeg" });
+            const out = await decodeQimImageFile(file, {
+              onProgress: (label, n, total) =>
+                setStegoProgress(`Trying ${label} (${n}/${total})...`),
+            });
+            result = { ok: out.ok, payload: out.payload, error: out.error };
+          } catch (e) {
+            result = { ok: false, error: `QIM decode failed: ${e instanceof Error ? e.message : String(e)}` };
+          }
         } else {
           addStegoLog("Falling back to DWT decode (PNG/other)...");
           console.log("[Detect] PNG/other: falling back to DWT decode:", path);
@@ -1735,7 +1755,19 @@ function App({ profile }: { profile: string | null }) {
     addStegoLog("Starting embed flow...");
     logger.logAction("embed_started", "Starting embed flow", { eventCount: events.length });
     try {
-      if (isWeb()) {
+      // One embed path for both platforms.
+      //
+      // The desktop branch removed here was the legacy Dot/PNG flow: it never
+      // used QIM at all, so the desktop build could only produce images that
+      // survive no chat app -- the exact failure this project exists to fix.
+      // The QIM Rust command it would have needed shells out to a Python
+      // script resolved through the BUILD machine's path, so that route could
+      // not have worked either.
+      //
+      // The webview provides OffscreenCanvas, so the TypeScript encoder -- the
+      // one every platform measurement was made against -- runs here unchanged.
+      // Only saving differs, and platform-web handles that.
+      {
         if (!embedCoverFile) {
           setDecodeError("Choose an image first.");
           setEmbedding(false);
@@ -2110,9 +2142,14 @@ function App({ profile }: { profile: string | null }) {
             const ptrOrderTag = embedSlotOrder === "profile" ? "" : `-${embedSlotOrder}`;
             const ptrOutName = `${ptrName}-stegstr-${targetPlatform}-ptr${ptrOrderTag}.jpg`;
             setStegoProgress("Downloading embedded image...");
-            addStegoLog(`Triggering download: ${ptrOutName}`);
-            downloadBlob(pointerBlob, ptrOutName);
-            addStegoLog("SUCCESS - Download started!");
+            const ptrSaved = await saveBlob(pointerBlob, ptrOutName);
+            if (ptrSaved === null && !isWeb()) {
+              addStegoLog("Save cancelled.");
+              setEmbedding(false);
+              setStegoProgress("");
+              return;
+            }
+            addStegoLog(ptrSaved ? `Saved to ${ptrSaved}` : `Triggering download: ${ptrOutName}`);
             setEmbedModalOpen(false);
             setEmbedCoverFile(null);
             setEmbedding(false);
@@ -2309,14 +2346,19 @@ function App({ profile }: { profile: string | null }) {
           // more than one configuration is being compared.
           const orderTag = embedSlotOrder === "profile" ? "" : `-${embedSlotOrder}`;
           const outName = `${name}-stegstr-${targetPlatform}${orderTag}.jpg`;
-          addStegoLog(`Triggering download: ${outName}`);
-          downloadBlob(blob, outName);
-          addStegoLog("SUCCESS - Download started!");
+          const savedPath = await saveBlob(blob, outName);
+          if (savedPath === null && !isWeb()) {
+            addStegoLog("Save cancelled.");
+            setEmbedding(false);
+            setStegoProgress("");
+            return;
+          }
+          addStegoLog(savedPath ? `Saved to ${savedPath}` : `Triggering download: ${outName}`);
           setEmbedModalOpen(false);
           setEmbedCoverFile(null);
           setEmbedding(false);
           setStegoProgress("");
-          setStatus("Image downloaded. Save it from your Downloads folder.");
+          setStatus(isWeb() ? "Image downloaded. Save it from your Downloads folder." : "Image saved.");
           logger.logAction("embed_completed", "QIM embed saved (browser download)", { eventCount: events.length, platform: targetPlatform });
           return;
         }
@@ -2337,133 +2379,21 @@ function App({ profile }: { profile: string | null }) {
         addStegoLog(`Dot encode complete! Output: ${blob.size} bytes PNG`);
         const name = embedCoverFile.name.replace(/\.[^.]+$/, "") || "image";
         setStegoProgress("Downloading embedded image...");
-        addStegoLog(`Triggering download: ${name}-stegstr.png`);
-        downloadBlob(blob, `${name}-stegstr.png`);
-        addStegoLog("SUCCESS - Download started!");
+        const dotSaved = await saveBlob(blob, `${name}-stegstr.png`);
+        if (dotSaved === null && !isWeb()) {
+          addStegoLog("Save cancelled.");
+          setEmbedding(false);
+          setStegoProgress("");
+          return;
+        }
+        addStegoLog(dotSaved ? `Saved to ${dotSaved}` : "Download started");
         setEmbedModalOpen(false);
         setEmbedCoverFile(null);
         setEmbedding(false);
         setStegoProgress("");
-        setStatus("Image downloaded. Save it from your Downloads folder.");
+        setStatus(isWeb() ? "Image downloaded. Save it from your Downloads folder." : "Image saved.");
         logger.logAction("embed_completed", "Dot embed saved (browser download)", { eventCount: events.length });
         return;
-      }
-      const tauri = await getTauri();
-      const coverPath = await tauri.openDialog({
-        multiple: false,
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] }],
-      });
-      if (!coverPath || typeof coverPath !== "string") {
-        setEmbedModalOpen(false);
-        return;
-      }
-      const coverName = coverPath.replace(/^.*[/\\]/, "").replace(/\.[^.]+$/, "") || "image";
-      const ext = "png";
-      let defaultPath = `${coverName}.${ext}`;
-      try {
-        const desktop = await tauri.invoke<string>("get_desktop_path");
-        if (desktop) defaultPath = `${desktop}/${coverName}.${ext}`;
-      } catch (_) {}
-      const outputPath = await tauri.saveDialog({
-        filters: [{ name: "PNG", extensions: [ext] }],
-        defaultPath,
-      });
-      if (!outputPath) {
-        setEmbedModalOpen(false);
-        return;
-      }
-      const finalOutputPath = outputPath.endsWith(`.${ext}`) ? outputPath : outputPath + `.${ext}`;
-      let maxPayloadBytes = 0;
-      try {
-        maxPayloadBytes = await tauri.invoke<number>("get_dot_capacity", { path: coverPath });
-        addStegoLog(`Dot capacity: ${maxPayloadBytes} bytes`);
-      } catch (e) {
-        addStegoLog(`Dot capacity check failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      const buildBundle = async (eventList: NostrEvent[]) => {
-        const pubkeysInEmbed = new Set(
-          eventList.flatMap((e) => [e.pubkey, ...e.tags.filter((t) => t[0] === "p").map((t) => t[1])])
-        );
-        const kind0InEvents = new Set(eventList.filter((e) => e.kind === 0).map((e) => e.pubkey));
-        const syntheticKind0: NostrEvent[] = [];
-        for (const pk of pubkeysInEmbed) {
-          if (!pk || kind0InEvents.has(pk)) continue;
-          const idForPk = identities.find((i) => Nostr.getPublicKey(Nostr.hexToBytes(i.privKeyHex)) === pk);
-          if (!idForPk) continue;
-          const prof = profiles[pk];
-          if (!prof) continue;
-          try {
-            const content = JSON.stringify(prof);
-            const ev = await Nostr.finishEventAsync(
-              { kind: 0, content, tags: [], created_at: Math.floor(Date.now() / 1000) },
-              Nostr.hexToBytes(idForPk.privKeyHex)
-            );
-            syntheticKind0.push(ev as NostrEvent);
-          } catch (_) {}
-        }
-        return { version: STEGSTR_BUNDLE_VERSION, events: [...syntheticKind0, ...eventList] } as NostrStateBundle;
-      };
-      // Same restriction as the web path (§12): without it, strangers'
-      // profile events picked up by the Global feed subscription get carried
-      // into the desktop embed too.
-      const embedCandidates = events.filter((e) => ourPubkeysSet.has(e.pubkey) || contactsSet.has(e.pubkey));
-      let trimmedEvents = [...embedCandidates];
-      let jsonString = "";
-      let payloadBytes: Uint8Array | null = null;
-      while (true) {
-        const bundle = await buildBundle(trimmedEvents);
-        jsonString = JSON.stringify(bundle);
-        // Mirror the web path's encryptEvents: honour "recipients only" mode
-        // instead of always embedding open. Previously this always called
-        // encryptOpen, so choosing "Recipients only" in the modal silently
-        // had no effect on desktop builds.
-        const encrypted = embedRecipientMode === "recipients" && embedRecipients.length > 0 && effectivePrivKey
-          ? await stegoCrypto.encryptForRecipients(
-              jsonString,
-              effectivePrivKey,
-              Array.from(new Set([Nostr.getPublicKey(Nostr.hexToBytes(effectivePrivKey)), ...embedRecipients])),
-            )
-          : await stegoCrypto.encryptOpen(jsonString);
-        if (!maxPayloadBytes || encrypted.length <= maxPayloadBytes) {
-          payloadBytes = encrypted;
-          break;
-        }
-        if (trimmedEvents.length === 0) break;
-        trimmedEvents = trimmedEvents.slice(0, -1);
-      }
-      if (!payloadBytes) {
-        setDecodeError("Image too small for stego payload");
-        return;
-      }
-      if (trimmedEvents.length < embedCandidates.length) {
-        addStegoLog(`Trimmed events: kept ${trimmedEvents.length}/${embedCandidates.length} to fit capacity`);
-      }
-      const payloadToEmbed = "base64:" + uint8ArrayToBase64(payloadBytes);
-      setStegoProgress("Embedding with Dot (offset, robust)...");
-      const cmd = "encode_stego_dot";
-      const result = await tauri.invoke<{ ok: boolean; path?: string; error?: string }>(cmd, {
-        coverPath,
-        outputPath: finalOutputPath,
-        payload: payloadToEmbed,
-      });
-      setEmbedModalOpen(false);
-      if (result.ok && result.path) {
-        try {
-          const isPng = await tauri.invoke<boolean>("check_png_signature", { path: result.path });
-          addStegoLog(`PNG signature check: ${isPng ? "OK" : "FAIL"}`);
-        } catch (e) {
-          addStegoLog(`PNG signature check error: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        addStegoLog(`Saved to: ${result.path}`);
-        setStatus(`Saved to ${result.path}. Finder opened.`);
-        logger.logAction("embed_completed", "Embed saved successfully", { path: result.path, eventCount: events.length });
-        try {
-          await tauri.invoke("reveal_in_finder", { path: result.path });
-        } catch (_) {}
-      } else {
-        const err = result.error || "Encode failed";
-        setDecodeError(err);
-        logger.logAction("embed_error", err, { coverPath, outputPath: finalOutputPath });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

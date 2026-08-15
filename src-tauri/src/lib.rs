@@ -357,6 +357,32 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a file as base64.
+///
+/// The desktop build now runs the SAME TypeScript QIM encoder as the browser,
+/// rather than shelling out to a Python script. The old path could never work
+/// in a distributed build: it resolved `qim_cli.py` through
+/// `env!("CARGO_MANIFEST_DIR")`, which bakes in the BUILD machine's directory,
+/// so every installed copy looked for the script under the CI runner's
+/// `D:\a\Stegstr\Stegstr\` and failed. It also required Python with jpeglib,
+/// reedsolo and numpy on the user's machine.
+///
+/// Base64 rather than raw bytes because it crosses the JS bridge as JSON.
+#[tauri::command]
+fn read_file_base64(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(normalize_path(&path)).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Write base64 data to a path. Counterpart to read_file_base64.
+#[tauri::command]
+fn write_file_base64(path: String, data: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("bad base64: {}", e))?;
+    std::fs::write(normalize_path(&path), bytes).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -376,6 +402,8 @@ pub fn run() {
             get_exchange_path,
             get_exchange_path_qim,
             reveal_in_finder,
+            read_file_base64,
+            write_file_base64,
             stegstr_log
         ])
         .run(tauri::generate_context!())
