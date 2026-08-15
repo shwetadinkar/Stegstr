@@ -179,12 +179,31 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}-${{ github.run_number }}
+          # Without this the action creates the tag on the DEFAULT branch, not
+          # on the commit that was actually built -- so the release pointed at
+          # upstream's unmodified code while the binaries came from a release
+          # branch. Anyone following the tag to "check the source" got a tree
+          # containing none of the work in the binary.
+          target_commitish: ${{ github.sha }}
           name: Stegstr v${{ steps.version.outputs.VERSION }} (build ${{ github.run_number }})
           body: |
             Download Stegstr for your platform.
-            - **macOS**: Stegstr-macOS.dmg — first time? Right-click the app → Open → click Open (one dialog). Or see "First time opening.txt" in the DMG.
-            - **Windows**: Stegstr-Windows.exe or Stegstr-Windows.msi
-            - **Linux**: Stegstr-Linux.deb or Stegstr-Linux.AppImage
+
+            - **macOS**: `Stegstr-macOS.dmg`
+            - **Windows**: `Stegstr-Windows.exe` or `Stegstr-Windows.msi`
+            - **Linux**: `Stegstr-Linux.deb` (`sudo apt install ./Stegstr-Linux.deb`) or `Stegstr-Linux.AppImage`
+
+            **First launch on macOS.** The build is unsigned, so macOS blocks it
+            once. Open **System Settings → Privacy & Security**, scroll to
+            **Security**, and click **Open Anyway** next to the Stegstr notice.
+            Control-clicking the app no longer works for this on macOS Sequoia
+            (15) and later. From a terminal, `xattr -cr /Applications/Stegstr.app`
+            does the same thing.
+
+            **First launch on Windows.** SmartScreen warns about unrecognised
+            publishers: click **More info**, then **Run anyway**.
+
+            Built from `${{ github.sha }}`.
           draft: false
           files: release-assets/*
         env:

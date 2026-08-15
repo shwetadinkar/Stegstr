@@ -23,6 +23,24 @@ Download the latest release for your platform:
 
 See [Releases](https://github.com/shwetadinkar/Stegstr/releases) for all builds.
 
+### Verifying your download
+
+Every release states the commit it was built from, and the build runs in public
+CI, so a binary can be traced to its source and rebuilt from scratch. Compare
+the checksum of what you downloaded against `SHA256SUMS` on the release page:
+
+```bash
+sha256sum -c SHA256SUMS          # Linux
+shasum -a 256 -c SHA256SUMS      # macOS
+```
+
+```powershell
+Get-FileHash Stegstr-Windows.exe -Algorithm SHA256    # Windows
+```
+
+If you would rather not run someone else's binary at all, building from source
+takes two commands and is documented below.
+
 **macOS — first launch.** The build is not signed with an Apple Developer
 certificate, so macOS blocks it the first time. To allow it:
 
