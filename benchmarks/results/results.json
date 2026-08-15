@@ -1,0 +1,131 @@
+{
+  "started": "2026-08-15T01:56:56.704Z",
+  "finished": "2026-08-15T02:01:14.375Z",
+  "platforms": [
+    {
+      "platform": "universal",
+      "channel": "resize to 1600px, re-encode Q70",
+      "geometry": "1600x1200",
+      "capacityBytes": 3911,
+      "payloadBytes": 977,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 853,
+      "note": "1600px, step 28"
+    },
+    {
+      "platform": "whatsapp_standard",
+      "channel": "resize to 1600px, re-encode Q70",
+      "geometry": "1600x1200",
+      "capacityBytes": 2183,
+      "payloadBytes": 545,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 1449,
+      "note": "Caps at 1600px, HD sends included"
+    },
+    {
+      "platform": "telegram_photo",
+      "channel": "resize to 1280px, re-encode Q70",
+      "geometry": "1280x960",
+      "capacityBytes": 2483,
+      "payloadBytes": 620,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 739,
+      "note": "1280px -- Telegram re-encodes every photo to 1280x960, so anything larger is resampled and lost"
+    },
+    {
+      "platform": "telegram_file",
+      "channel": "lossless (no resize or re-encode)",
+      "geometry": "2400x1800",
+      "capacityBytes": 8832,
+      "payloadBytes": 2208,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 1044,
+      "note": "No resize, step 20"
+    },
+    {
+      "platform": "instagram",
+      "channel": "resize to 1440 square, re-encode Q70",
+      "geometry": "1440x1440",
+      "capacityBytes": 4226,
+      "payloadBytes": 1056,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 790,
+      "note": "1440x1440 square, step 56, lowest 6 AC positions"
+    },
+    {
+      "platform": "facebook",
+      "channel": "resize to 2048px, re-encode Q70",
+      "geometry": "2048x1536",
+      "capacityBytes": 3647,
+      "payloadBytes": 911,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 1618,
+      "note": "Caps at 2048px (not independently verified)"
+    },
+    {
+      "platform": "twitter",
+      "channel": "resize to 1600px, re-encode Q70",
+      "geometry": "1600x1200",
+      "capacityBytes": 2183,
+      "payloadBytes": 545,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 1477,
+      "note": "Caps at 1600px (not independently verified)"
+    },
+    {
+      "platform": "imessage",
+      "channel": "resize to 1280px, re-encode Q70",
+      "geometry": "1280x960",
+      "capacityBytes": 1386,
+      "payloadBytes": 346,
+      "selfTest": true,
+      "survivedChannel": true,
+      "ber": 0,
+      "encodeMs": 1003,
+      "note": "Conservative 1280px target"
+    }
+  ],
+  "deltaProbe": [
+    {
+      "delta": 14,
+      "results": {
+        "Q95": false,
+        "Q85": false,
+        "Q75": true,
+        "Q70": false
+      }
+    },
+    {
+      "delta": 20,
+      "results": {
+        "Q95": true,
+        "Q85": true,
+        "Q75": true,
+        "Q70": false
+      }
+    },
+    {
+      "delta": 28,
+      "results": {
+        "Q95": true,
+        "Q85": true,
+        "Q75": true,
+        "Q70": true
+      }
+    }
+  ]
+}

@@ -244,6 +244,22 @@ Payloads are encrypted (AES-GCM), with NIP-44 available for direct messages.
 
 ---
 
+## Reproducing the measurements
+
+```bash
+npm run bench
+```
+
+Runs the platform matrix and the step-size probe and writes
+[`benchmarks/results/RESULTS.md`](benchmarks/results/RESULTS.md), which is
+committed — so you can re-run it and diff against what is checked in.
+
+Note what it does and does not establish. The channel it models is a resize
+plus a JPEG re-encode. Real platforms also sharpen, and Instagram's damage is
+sharpening rather than compression, so a simulator flatters it. A pass there
+means the encoder is internally consistent and survives recompression; the
+claim that payloads survive real platforms rests on phone testing, not on this.
+
 ## What this fork changes
 
 See [CHANGES.md](CHANGES.md) for the full list against upstream — platform

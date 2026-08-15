@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "test:e2e": "node tests/e2e/run-permutations.mjs",
     "build:mcp": "esbuild src/mcp-server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist-mcp/server.mjs --external:@napi-rs/canvas",
-    "mcp": "npm run build:mcp && node dist-mcp/server.mjs"
+    "mcp": "npm run build:mcp && node dist-mcp/server.mjs",
+    "bench": "esbuild benchmarks/run.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist-mcp/bench.mjs --external:@napi-rs/canvas && node dist-mcp/bench.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
