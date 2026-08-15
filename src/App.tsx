@@ -1953,6 +1953,33 @@ function App({ profile }: { profile: string | null }) {
           const { capacityBytes: maxPayloadBytes, width: resW, height: resH } = await getQimCapacityForFile(embedCoverFile, targetPlatform);
           addStegoLog(`QIM capacity: ${maxPayloadBytes} bytes (${resW}x${resH})`);
 
+          // A cover smaller than the target keeps its own size, and that is a
+          // silent failure waiting to happen.
+          //
+          // coverGeometry only ever DOWNSCALES -- the resize is gated on
+          // `w > targetWidth` -- so aiming a 1024px photo at telegram_photo
+          // ships it at 1024, and Telegram resamples every photo to 1280x960
+          // on arrival. Resampling moves the 8x8 grid, which destroys the
+          // payload (§3.1). The self-test cannot catch it: it verifies the
+          // file as written, not as the platform hands it back, so everything
+          // looks fine right up until the recipient sees nothing.
+          if (platformWidth > 0) {
+            const wantW = platformWidth;
+            const wantH = platformProfile.square ? platformWidth : null;
+            if (resW !== wantW || (wantH !== null && resH !== wantH)) {
+              const want = wantH ? `${wantW}x${wantH}` : `${wantW}px wide`;
+              addStegoLog(
+                `WARNING: cover produced ${resW}x${resH}, but ${targetPlatform} expects ${want}. ` +
+                `Photos are never enlarged, so a small cover keeps its own size and the platform ` +
+                `may resize it on arrival — which destroys the hidden data.`,
+              );
+              setStatus(
+                `Heads up: this photo is smaller than ${targetPlatform} expects (${resW}x${resH} ` +
+                `vs ${want}). It may still work, but a photo at least ${wantW}px wide is much safer.`,
+              );
+            }
+          }
+
           // ===== POINTER TIER (§10.4) =====
           //
           // Publish the feed to a relay as an encrypted blob and embed only a

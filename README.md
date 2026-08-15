@@ -166,7 +166,44 @@ Binary: `target/release/stegstr-cli` (Windows: `stegstr-cli.exe`).
 ./target/release/stegstr-cli detect out.png
 ```
 
-For AI agents, see [`skill/stegstr/SKILL.md`](skill/stegstr/SKILL.md).
+---
+
+## For AI agents (MCP)
+
+Stegstr exposes its steganography as tools any MCP client can call — hide a
+message in a photo, recover one, check whether a photo is a good carrier, and
+list the platform targets.
+
+```bash
+npm install && npm run build:mcp
+```
+
+Then register it. For Claude Desktop, in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "stegstr": {
+      "command": "node",
+      "args": ["/absolute/path/to/Stegstr/dist-mcp/server.mjs"]
+    }
+  }
+}
+```
+
+Tools: `stegstr_platforms`, `stegstr_inspect_cover`, `stegstr_capacity`,
+`stegstr_embed`, `stegstr_detect`.
+
+The server calls the same encoder the app uses, so an agent and a person
+clicking **Embed** produce comparable images. Embedding is verified by decoding
+the result back before the file is written.
+
+Full skill definition: [`skill/stegstr/SKILL.md`](skill/stegstr/SKILL.md).
+
+**Note on the legacy CLI.** `stegstr-cli` uses an older PNG method that does
+**not** survive platform processing — chat apps convert uploads to JPEG, which
+destroys it. Use it only for offline transfer where the file is passed along
+untouched; use the MCP server for anything sent through a platform.
 
 ---
 

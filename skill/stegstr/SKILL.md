@@ -1,111 +1,163 @@
 ---
 name: stegstr
-summary: Embed and decode hidden messages in PNG images. Steganographic Nostr client for hiding data in images—works offline, no registration.
-description: Decode and embed Stegstr payloads in PNG images. Use when the user needs to extract hidden Nostr data from a Stegstr image, encode a payload into a cover PNG, or work with steganographic social networking (Nostr-in-images). Supports CLI (stegstr-cli decode, detect, embed, post) for scripts and AI agents.
+summary: Hide messages inside photos so they survive being sent through WhatsApp, Telegram and Instagram. Steganographic Nostr client — works offline, no registration.
+description: Hide and recover messages in images. Use when the user wants to send something covertly through a chat app, extract hidden content from a photo they received, or work with steganographic social networking. The MCP server is the interface to use — it targets each platform's measured image processing so the payload survives recompression.
 license: MIT
-tags: steganography, nostr, images, crypto, integration, file-management, automation, cli
+tags: steganography, nostr, images, crypto, privacy, mcp, cli, automation
 install:
   requirements: |
-    - Rust (latest stable) - https://rustup.rs
+    - Node.js 18+
     - Git
   steps: |
-    1. git clone https://github.com/brunkstr/Stegstr.git
-    2. cd Stegstr/src-tauri && cargo build --release --bin stegstr-cli
-    3. Binary: target/release/stegstr-cli (Windows: stegstr-cli.exe)
+    1. git clone https://github.com/shwetadinkar/Stegstr.git
+    2. cd Stegstr && npm install
+    3. npm run build:mcp
+    4. Register the server (see "Setup" below)
 permissions:
   - filesystem
 metadata:
   homepage: https://stegstr.com
-  for-agents: https://www.stegstr.com/wiki/for-agents.html
-  repo: https://github.com/brunkstr/Stegstr
+  repo: https://github.com/shwetadinkar/Stegstr
 ---
 
 # Stegstr
 
-Stegstr hides Nostr messages and arbitrary payloads inside PNG images using steganography. Users embed their feed (posts, DMs, JSON) into images and share them; recipients use Detect to load the hidden content. No registration, works offline.
+Hide a message inside an ordinary photo, send the photo through a normal chat
+app, and have the recipient recover the message from it.
+
+The hard part is not hiding data — it is surviving the journey. WhatsApp,
+Telegram and Instagram re-encode and resize every photo they carry, and naive
+steganography does not survive that. Each platform target here was derived by
+sending real images through the real service and measuring what came back.
 
 ## When to use this skill
 
-- User wants to **decode** (extract) hidden data from a PNG that contains Stegstr data.
-- User wants to **embed** a payload into a cover PNG (e.g. Nostr bundle, JSON, text).
-- User mentions steganography, Nostr-in-images, Stegstr, hiding data in images, or secret messages in photos.
-- User needs programmatic access for automation, scripts, or AI agents.
+- Hide a message in a photo that will be **sent through** WhatsApp, Telegram,
+  Instagram, Facebook or Twitter.
+- Extract hidden content from a photo the user received.
+- Check whether a photo is a suitable carrier before using it.
+- Anything involving steganography, hidden messages in images, or Stegstr.
 
-## CLI (headless)
-
-Build the CLI from the Stegstr repo:
-
-```bash
-git clone https://github.com/brunkstr/Stegstr.git
-cd Stegstr/src-tauri
-cargo build --release --bin stegstr-cli
-```
-
-Binary: `target/release/stegstr-cli` (or `stegstr-cli.exe` on Windows).
-
-### Decode (extract payload)
+## Setup
 
 ```bash
-stegstr-cli decode image.png
+git clone https://github.com/shwetadinkar/Stegstr.git
+cd Stegstr && npm install && npm run build:mcp
 ```
 
-Writes raw payload to stdout. Valid UTF-8 JSON is printed as text; otherwise `base64:<data>`. Exit 0 on success.
+Register the server with your MCP client. For Claude Desktop, add to
+`claude_desktop_config.json`:
 
-### Detect (decode + decrypt app bundle)
+```json
+{
+  "mcpServers": {
+    "stegstr": {
+      "command": "node",
+      "args": ["/absolute/path/to/Stegstr/dist-mcp/server.mjs"]
+    }
+  }
+}
+```
+
+Use an absolute path, and restart the client afterwards.
+
+## Tools
+
+| Tool | Purpose |
+|---|---|
+| `stegstr_platforms` | The platform targets and the geometry each uses |
+| `stegstr_inspect_cover` | Score a photo for how well it can hide data |
+| `stegstr_capacity` | Bytes available for a given photo and target |
+| `stegstr_embed` | Hide a message, verified by decoding it back before writing |
+| `stegstr_detect` | Recover hidden content from an image |
+
+## The two things that decide whether this works
+
+**1. Pick the target that matches how the image will be sent.**
+
+Each platform processes photos differently, and the encoder has to match. Send
+an image built for `telegram_photo` as a *file* instead of a photo — or the
+reverse — and the processing differs enough to lose the payload.
+
+```
+universal         1600px    WhatsApp, Twitter, Facebook. The safe default.
+telegram_photo    1280x960  Telegram re-encodes every photo to this.
+telegram_file     no resize Telegram as a file. Largest capacity.
+instagram         1440 sq   Instagram normalises everything to a square.
+```
+
+Call `stegstr_platforms` when unsure. Choosing wrong is the most common reason
+hidden data disappears.
+
+**2. Use a detailed photo.**
+
+Fine detail is what conceals the payload *and* what lets it survive
+recompression. Foliage, fabric, crowds, brickwork, textured surfaces all work
+well. Large smooth areas — open sky, plain walls, screenshots, logos — give the
+data nowhere to hide; embedding into them is more visible and often fails
+outright.
+
+`stegstr_inspect_cover` scores this. Roughly: above 25 is good, 12–25 is usable,
+below 12 will probably fail.
+
+Also prefer a photo **at least as wide as the target** (1600px for `universal`).
+Photos are never enlarged, so a small one keeps its own size and the platform
+may resize it on arrival — which destroys the payload.
+
+## Example
+
+```
+1. stegstr_inspect_cover  { image_path: "~/photos/garden.jpg" }
+   -> detail 41.2, good — plenty of texture to hide in
+
+2. stegstr_embed { image_path: "~/photos/garden.jpg",
+                   message: "Meeting moved to Thursday 4pm",
+                   output_path: "~/photos/send-me.jpg",
+                   platform: "universal" }
+   -> hidden, verified by decoding it back before writing
+
+3. User sends send-me.jpg through WhatsApp.
+
+4. Recipient: stegstr_detect { image_path: "~/Downloads/IMG-received.jpg" }
+   -> "Meeting moved to Thursday 4pm"
+```
+
+## Things worth telling the user
+
+- **Do not screenshot or re-save the image.** Either destroys the hidden data.
+  Send the file itself.
+- **Embedding is verified.** `stegstr_embed` decodes the image back before
+  writing it, so a cover that cannot carry the message reports failure rather
+  than producing an image that silently loses it.
+- **Platform processing varies.** If a received image does not decode, having
+  the sender re-send the same file often works — it is not necessary to
+  re-embed.
+- **The payload is encrypted**, so a relay or platform sees only an ordinary
+  photo.
+
+## Legacy CLI
+
+The repo also ships `stegstr-cli`, a Rust binary using an older **PNG**
+dot-matrix method.
+
+**It does not survive platform processing.** PNG is lossless, but every chat
+app converts uploads to JPEG, which destroys that method's payload entirely.
+Use it only for local or offline transfer where the file is passed along
+untouched — a USB stick, a file share, an email attachment that is not
+re-encoded.
 
 ```bash
-stegstr-cli detect image.png
+cd src-tauri && cargo build --release --bin stegstr-cli
+./target/release/stegstr-cli post "message" --output bundle.json
+./target/release/stegstr-cli embed cover.png -o out.png --payload @bundle.json --encrypt
+./target/release/stegstr-cli detect out.png
 ```
 
-Decodes and decrypts; prints Nostr bundle JSON `{ "version": 1, "events": [...] }`.
-
-### Embed (hide payload in image)
-
-```bash
-stegstr-cli embed cover.png -o out.png --payload "text or JSON"
-stegstr-cli embed cover.png -o out.png --payload @bundle.json
-stegstr-cli embed cover.png -o out.png --payload @bundle.json --encrypt
-```
-
-Use `--payload @file` to load from file. Use `--encrypt` so any Stegstr user can detect. Use `--payload-base64 <base64>` for binary payloads.
-
-### Post (create kind 1 note bundle)
-
-```bash
-stegstr-cli post "Your message here" --output bundle.json
-stegstr-cli post "Message" --privkey-hex <64-char-hex> --output bundle.json
-```
-
-Creates a Nostr bundle; use `stegstr-cli embed` to hide it in an image.
-
-## Example workflow
-
-```bash
-# Create a post bundle
-stegstr-cli post "Hello from OpenClaw" --output bundle.json
-
-# Embed into a cover image (encrypted for any Stegstr user)
-stegstr-cli embed cover.png -o stego.png --payload @bundle.json --encrypt
-
-# Recipient detects and extracts
-stegstr-cli detect stego.png
-```
-
-## Image format
-
-PNG only (lossless). JPEG or other lossy formats will corrupt the hidden data.
-
-## Payload format
-
-- **Magic:** `STEGSTR` (7 bytes ASCII)
-- **Length:** 4 bytes, big-endian
-- **Payload:** UTF-8 JSON or raw bytes (desktop app encrypts; CLI can embed raw or `--encrypt`)
-
-Decrypted bundle: `{ "version": 1, "events": [ ... Nostr events ... ] }`. Schema: [bundle.schema.json](https://raw.githubusercontent.com/brunkstr/Stegstr/main/schema/bundle.schema.json).
+For anything that will pass through a chat app, use the MCP server instead.
 
 ## Links
 
-- **agents.txt:** https://www.stegstr.com/agents.txt
-- **For agents:** https://www.stegstr.com/wiki/for-agents.html
-- **CLI docs:** https://www.stegstr.com/wiki/cli.html
-- **Downloads:** https://github.com/brunkstr/Stegstr/releases/latest
+- **Repo:** https://github.com/shwetadinkar/Stegstr
+- **What this fork changes:** https://github.com/shwetadinkar/Stegstr/blob/main/CHANGES.md
+- **Downloads:** https://github.com/shwetadinkar/Stegstr/releases/latest
+- **Upstream project:** https://stegstr.com
