@@ -133,7 +133,28 @@ describe("adaptive ladder band", () => {
     expect(same(await detectQim(stego, base), p)).toBe(false);
   }, 120000);
 
-  it("no shipped profile enables it yet", async () => {
+  it("no shipped profile enables it, and none should", async () => {
+    /*
+     * §19.6 is CLOSED. The alternative band was built to fix a real defect --
+     * the shipped band puts 91.9% of blocks on the lowest rung, so the ladder
+     * barely discriminates and the app embeds at an effective step of 12.68
+     * against a nominal 28. That measurement reproduces exactly on a real
+     * 1600x1200 photo at the shipped embed quality.
+     *
+     * But the fix does not work. Measured on that photo, 1200-byte payload:
+     *
+     *   band        perturbation  masked visibility  flat blocks  survives to
+     *   zz 25-40        2.52           0.487            1.64          Q65
+     *   zz 7-24         3.00           0.512            1.67          Q65
+     *
+     * 19% more perturbation, WORSE masked visibility (§3.4's metric, the one
+     * that tracks the eye), more perturbation in flat blocks rather than less,
+     * and identical robustness. The whole idea rests on redistributing
+     * perturbation toward blocks that can hide it, and that redistribution
+     * does not happen.
+     *
+     * So this stays off, and the reason is a measurement rather than caution.
+     */
     const { PLATFORM_PROFILES } = await import("../stego-adaptive");
     for (const [name, prof] of Object.entries(PLATFORM_PROFILES)) {
       expect(`${name}:${prof.activityBand ?? "high"}`).toBe(`${name}:high`);

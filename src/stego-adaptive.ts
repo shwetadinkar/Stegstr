@@ -28,8 +28,32 @@
  *    Texture masks perturbation; flat regions do not. Embedding artifacts show
  *    up on walls, ceilings and sky long before they show in clothing or
  *    foliage. Scaling the QIM step by local activity -- larger where texture
- *    hides it, smaller where it would show -- measured a 2.0x reduction in
- *    visible perturbation at identical payload and identical mean step size.
+ *    hides it, smaller where it would show.
+ *
+ *    HOW MUCH IT ACTUALLY DOES, on a real 1600x1200 photo at the shipped
+ *    embed quality (§19.6, re-measured and confirmed):
+ *
+ *      rung        0      1      2     3     4     effective step
+ *      occupancy  91.9%   7.9%   0.2%  0.0%  0.0%      12.68 of 28
+ *
+ *    **Nearly every block lands on the lowest rung, so the ladder barely
+ *    discriminates at all** -- and the app embeds at less than half the step
+ *    its profiles advertise. This comment previously claimed "a 2.0x reduction
+ *    in visible perturbation at identical mean step size". That number is not
+ *    reproducible and does not describe behaviour on a photograph; it is
+ *    removed rather than restated.
+ *
+ *    The obvious fix -- measure texture on a band that can see it (zigzag 7-24
+ *    instead of 25-40) -- was built and measured and does NOT help:
+ *
+ *      band        perturbation  masked visibility  flat blocks  survives to
+ *      zz 25-40        2.52           0.487            1.64          Q65
+ *      zz 7-24         3.00           0.512            1.67          Q65
+ *
+ *    19% more perturbation, worse masked visibility, MORE perturbation in flat
+ *    blocks rather than less, and identical robustness. The redistribution the
+ *    idea depends on does not happen. Available as `activityBand: "mid"` and
+ *    enabled by no profile.
  *
  *    Two properties make this safe to decode:
  *
