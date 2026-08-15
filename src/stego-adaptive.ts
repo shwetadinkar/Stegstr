@@ -106,6 +106,24 @@ export interface PlatformProfile {
    */
   textureFloor?: number;
   /**
+   * Which coefficients the adaptive step ladder measures texture on (§19.6).
+   *
+   * "high" (default, current behaviour) reads zigzag 25-40. Measured on a real
+   * 1600x1200 photo that band puts **91.9% of blocks on the lowest rung**, so
+   * the ladder is very nearly a no-op and the effective step is 12.68 against a
+   * nominal 28.
+   *
+   * "mid" reads zigzag 7-24, still above the write band (profiles use 1-6) so
+   * embedding cannot move the measurement. On the same photo the rungs spread
+   * 47.9 / 21.8 / 17.4 / 11.4 / 1.4 -- actual adaptation -- and the effective
+   * step becomes 18.93. That is *more* total perturbation, but placed where
+   * texture masks it rather than spread evenly.
+   *
+   * Whether that trade is a visual win is an eye-and-phone question, not a CI
+   * one, so it is off by default and untested against a real platform.
+   */
+  activityBand?: "high" | "mid";
+  /**
    * Bit repetition. Raising it is the one lever that buys robustness without
    * costing visibility -- it spends capacity, which a small payload has in
    * abundance. Omitted = the QIM default of 5.

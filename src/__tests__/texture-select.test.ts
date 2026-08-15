@@ -84,3 +84,59 @@ describe("texture-selected block filling", () => {
     }
   });
 });
+
+/**
+ * §19.6: the adaptive ladder measures texture on a band that cannot see it.
+ *
+ * Unlike the block-selection attempt above, this changes no addressing at all
+ * — every block keeps its slot, so there is no header problem and no desync
+ * risk. It only changes which coefficients decide a block's step size.
+ */
+describe("adaptive ladder band", () => {
+  it("round-trips on the alternative band", async () => {
+    const { embedQim, detectQim } = await import("../stego-qim");
+    const cover = makeCoverJpeg(1200, 900, 11);
+    const p = payload(96);
+    const opts = { delta: 28, lumaAcCount: 6, rsNsym: 32, activityBand: "mid" as const };
+    const stego = await embedQim(cover, p, opts);
+    expect(same(await detectQim(stego, opts), p)).toBe(true);
+  }, 120000);
+
+  it("survives a recompression on the alternative band", async () => {
+    const { embedQim, detectQim } = await import("../stego-qim");
+    const cover = makeCoverJpeg(1200, 900, 11);
+    const p = payload(96);
+    const opts = { delta: 28, lumaAcCount: 6, rsNsym: 32, activityBand: "mid" as const };
+    const stego = await embedQim(cover, p, opts);
+    const through = await simulateChannel(stego, { quality: 70 });
+    expect(same(await detectQim(through, opts), p)).toBe(true);
+  }, 120000);
+
+  it("produces a different image, so the band is doing something", async () => {
+    const { embedQim } = await import("../stego-qim");
+    const cover = makeCoverJpeg(1200, 900, 11);
+    const p = payload(96);
+    const base = { delta: 28, lumaAcCount: 6, rsNsym: 32 };
+    const high = await embedQim(cover, p, base);
+    const mid = await embedQim(cover, p, { ...base, activityBand: "mid" as const });
+    expect(Array.from(mid)).not.toEqual(Array.from(high));
+  }, 120000);
+
+  it("decoding with the wrong band fails, so it must be declared", async () => {
+    // Both sides must agree: the band decides each block's step size, and
+    // reading with the wrong one reads at the wrong step.
+    const { embedQim, detectQim } = await import("../stego-qim");
+    const cover = makeCoverJpeg(1200, 900, 11);
+    const p = payload(96);
+    const base = { delta: 28, lumaAcCount: 6, rsNsym: 32 };
+    const stego = await embedQim(cover, p, { ...base, activityBand: "mid" as const });
+    expect(same(await detectQim(stego, base), p)).toBe(false);
+  }, 120000);
+
+  it("no shipped profile enables it yet", async () => {
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    for (const [name, prof] of Object.entries(PLATFORM_PROFILES)) {
+      expect(`${name}:${prof.activityBand ?? "high"}`).toBe(`${name}:high`);
+    }
+  });
+});

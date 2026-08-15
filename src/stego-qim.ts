@@ -57,6 +57,16 @@ const ACTIVITY_COEFF_INDICES: number[] = (() => {
  * Zigzag 7-24: above every position the encoder writes (profiles use 1-6), so
  * embedding cannot move the number the decoder has to reproduce.
  */
+/** Zigzag 7-24 as 8x8 offsets: the alternative ladder band (§19.6). */
+const MID_ACTIVITY_INDICES: number[] = (() => {
+  const out: number[] = [];
+  for (let z = 7; z <= 24; z++) {
+    const [dy, dx] = ZIGZAG_2D[z];
+    out.push(dy * 8 + dx);
+  }
+  return out;
+})();
+
 const CARRIER_COEFF_INDICES: number[] = (() => {
   const out: number[] = [];
   for (let z = CARRIER_COEFF_ZIGZAG[0]; z <= CARRIER_COEFF_ZIGZAG[1]; z++) {
@@ -128,6 +138,8 @@ export interface QimOptions {
    * sweep tries both, so images made before this option still decode.
    */
   slotOrder?: SlotOrder;
+  /** Ladder texture band (§19.6). "high" = zigzag 25-40 (default), "mid" = 7-24. */
+  activityBand?: "high" | "mid";
   /**
    * Skip blocks whose texture score falls below this, so the flattest regions
    * carry nothing (§17.14). Must match between embed and decode. Undefined =
@@ -571,6 +583,8 @@ export async function embedQim(
   const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
   const slotOrder: SlotOrder = options?.slotOrder ?? "ac-major";
   const textureFloor = options?.textureFloor;
+  const activityIndices = options?.activityBand === "mid"
+    ? MID_ACTIVITY_INDICES : ACTIVITY_COEFF_INDICES;
 
   // Step 1: Decode JPEG to pixel data
   const { data: pixels, width, height } = await decodeJpegToPixels(imageData);
@@ -678,7 +692,7 @@ export async function embedQim(
     // Per-block step size. Computed from coefficients outside the embedding
     // band so this same number is recoverable at detect time.
     const blockDelta = adaptive
-      ? deltaForBlock(delta, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
+      ? deltaForBlock(delta, blockActivity(qCoeffs, activityIndices), LADDER_MEAN)
       : delta;
 
     // §17.14: a block with no texture carries nothing. It is where the
@@ -829,6 +843,8 @@ export async function detectQim(
   const lumaAcCount = options?.lumaAcCount ?? AC_INDICES.length;
   const slotOrder: SlotOrder = options?.slotOrder ?? "ac-major";
   const textureFloor = options?.textureFloor;
+  const activityIndices = options?.activityBand === "mid"
+    ? MID_ACTIVITY_INDICES : ACTIVITY_COEFF_INDICES;
 
   try {
     // Step 1: Decode JPEG to pixel data
@@ -897,7 +913,7 @@ export async function detectQim(
         qCoeffs = quantize(dctCoeffs, qt);
         blockDctCache.set(key, qCoeffs);
         blockDeltaCache.set(key, adaptive
-          ? deltaForBlock(delta, blockActivity(qCoeffs, ACTIVITY_COEFF_INDICES), LADDER_MEAN)
+          ? deltaForBlock(delta, blockActivity(qCoeffs, activityIndices), LADDER_MEAN)
           : delta);
       }
       const blockDelta = blockDeltaCache.get(key) ?? delta;

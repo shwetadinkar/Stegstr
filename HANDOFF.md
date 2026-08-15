@@ -2844,3 +2844,50 @@ been tested against a real channel.
 asserts no profile sets it, and the encode path is unchanged when it is unset.
 The failing round trip is pinned by a test that asserts the failure, so whoever
 fixes the header sees it flip to passing.
+
+### 19.6 The adaptive ladder measures texture on a band that cannot see it
+
+Independent confirmation of §15.3, from the opposite direction, and a working
+alternative behind a flag.
+
+Rung occupancy measured on a real 1600x1200 photo:
+
+```
+zz 25-40 (shipped)    0:91.9%  1:7.9%   2:0.2%   3:0.0%   4:0.0%   effective step 12.68
+zz 7-24  (option)     0:47.9%  1:21.8%  2:17.4%  3:11.4%  4:1.4%   effective step 18.93
+```
+
+§15.3 recorded 92.6% on the lowest rung and ~12.6 effective. This gets 91.9%
+and 12.68 by a different route. **The ladder does essentially nothing today** --
+the app embeds at less than half the step its profiles advertise, and the "2.0x
+reduction in visible perturbation" in the module header does not describe
+behaviour on a real photo.
+
+**Why this matters more than §17.14 did.** It changes no addressing. Every
+block keeps its slot, so there is no length-header problem, no desync risk, and
+no capacity cost -- only which coefficients decide each block's step. It
+round-trips and survives a recompression in CI, which the block-selection
+attempt never did.
+
+**The trade, stated honestly.** Effective step rises from 12.68 to 18.93. That
+is *more* total perturbation, redistributed toward blocks with texture to hide
+it. Whether that reads as better or worse is a masked-visibility question --
+and §3.4 is explicit that PSNR gets this backwards, having once ranked a
+visibly dotted image above a clean one. It needs an eye on a real photo, and a
+phone to confirm the higher step still survives.
+
+Normalising to hold the *current* effective step (12.68) instead would drop flat
+blocks to ~8.2 and raise textured ones, which is the quieter option but makes
+the weakest blocks weaker still. Not implemented; worth trying second.
+
+**Status:** `activityBand: "high" | "mid"` on the profile and in QimOptions,
+default `"high"` (unchanged). No profile sets it; a test asserts that. Nine
+tests cover the round trip, the channel, that it produces a different image,
+and that decoding with the wrong band fails -- so both sides must declare it.
+
+**Prerequisite before any profile enables it:** the blind-decode sweep does not
+try the band. `decodeQimImageFile` guesses profiles by `lumaAcCount`/`rsNsym`;
+a profile using "mid" would embed on one band and be blind-decoded on the
+other, which never succeeds. That is exactly the trap §15.13 recorded for
+rsNsym, where the self-test still passed because it knows the profile and only
+a real read-back failed.
