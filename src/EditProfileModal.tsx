@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { uploadMedia } from "./upload";
 
 export interface EditProfileModalProps {
@@ -12,6 +12,10 @@ export interface EditProfileModalProps {
   onEditPictureChange: (value: string) => void;
   editBanner: string;
   onEditBannerChange: (value: string) => void;
+  /** Signs the NIP-98 upload token. Uploads are rejected without it. */
+  privKeyHex: string;
+  /** Uploads leave the machine, so they must respect the network switch. */
+  networkEnabled: boolean;
 }
 
 export function EditProfileModal({
@@ -25,31 +29,50 @@ export function EditProfileModal({
   onEditPictureChange,
   editBanner,
   onEditBannerChange,
+  privKeyHex,
+  networkEnabled,
 }: EditProfileModalProps) {
   const editPfpInputRef = useRef<HTMLInputElement>(null);
   const editCoverInputRef = useRef<HTMLInputElement>(null);
 
-  const handlePfpUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [uploadError, setUploadError] = useState("");
+
+  /**
+   * Shared by both pickers. These used to `catch (_) {}` -- so a failed upload
+   * was indistinguishable from nothing happening, which is how the NIP-98
+   * rejection stayed invisible: every upload had been failing silently.
+   */
+  const upload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    apply: (url: string) => void,
+  ) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
+    if (!networkEnabled) {
+      setUploadError("Uploading a picture needs the network, and Network is off. The image would be publicly readable.");
+      return;
+    }
+    setUploadError("");
     try {
-      const url = await uploadMedia(file);
-      if (url) onEditPictureChange(url);
-    } catch (_) {}
+      const url = await uploadMedia(file, privKeyHex);
+      if (url) apply(url);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    }
   };
 
-  const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const url = await uploadMedia(file);
-      if (url) onEditBannerChange(url);
-    } catch (_) {}
-  };
+  const handlePfpUpload = (e: React.ChangeEvent<HTMLInputElement>) => upload(e, onEditPictureChange);
+  const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => upload(e, onEditBannerChange);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
+        {uploadError && (
+          <p className="error" style={{ fontSize: "0.82rem", margin: "0 0 0.5rem", lineHeight: 1.4 }}>
+            {uploadError}
+          </p>
+        )}
         <h3>Edit profile</h3>
         <label>
           Name

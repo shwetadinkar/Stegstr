@@ -16,7 +16,7 @@ import {
   qimSelfTest,
   getQimCapacityForFile,
 } from "./stego-qim";
-import { uploadMedia } from "./upload";
+import { uploadMedia, isUploadableMedia } from "./upload";
 import { ensureStegstrSuffix } from "./constants";
 import * as stegoCrypto from "./stego-crypto";
 import * as logger from "./logger";
@@ -2591,25 +2591,52 @@ function App({ profile }: { profile: string | null }) {
     const files = e.target.files;
     if (!files?.length) return;
     e.target.value = "";
+
+    // Attaching UPLOADS the file to a third-party host. With the network off
+    // the app promises "nothing is sent", and this path ignored that entirely
+    // -- the same failure as the pointer-resolution leak. Refuse, and say what
+    // turning it on would mean.
+    if (!networkEnabled) {
+      setStatus(
+        "Attaching uploads the file to nostr.build, so it needs the network — " +
+        "and Network is off. Turn it on if you want to attach; the file will be " +
+        "publicly readable by anyone with the link.",
+      );
+      return;
+    }
+    if (!effectivePrivKey) {
+      setStatus("Attaching needs an identity to sign the upload. Log in first.");
+      return;
+    }
+
     setUploadingMedia(true);
     setStatus("Uploading…");
     try {
       const urls: string[] = [];
+      const skipped: string[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
-          const url = await uploadMedia(file);
-          urls.push(url);
-        }
+        if (!isUploadableMedia(file)) { skipped.push(file.name); continue; }
+        urls.push(await uploadMedia(file, effectivePrivKey));
       }
       setPostMediaUrls((prev) => [...prev, ...urls]);
-      setStatus(urls.length ? `Uploaded ${urls.length} file(s)` : "Select image or video files");
+      // Say which files were skipped and why. The previous version dropped
+      // them silently and reported "Select image or video files", which read
+      // as though nothing had been selected at all.
+      const parts: string[] = [];
+      if (urls.length) parts.push(`Attached ${urls.length} file(s) — public link${urls.length > 1 ? "s" : ""}`);
+      if (skipped.length) {
+        parts.push(
+          `skipped ${skipped.join(", ")}: nostr.build hosts images and video only`,
+        );
+      }
+      setStatus(parts.join(". ") || "Nothing to attach.");
     } catch (err) {
-      setStatus("Upload failed: " + (err instanceof Error ? err.message : String(err)));
+      setStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setUploadingMedia(false);
     }
-  }, []);
+  }, [networkEnabled, effectivePrivKey]);
 
   const handleFollow = useCallback(
     async (theirPk: string) => {
@@ -3335,6 +3362,8 @@ function App({ profile }: { profile: string | null }) {
           onEditPictureChange={setEditPicture}
           editBanner={editBanner}
           onEditBannerChange={setEditBanner}
+          privKeyHex={effectivePrivKey}
+          networkEnabled={networkEnabled}
         />
       )}
 

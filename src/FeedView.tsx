@@ -101,10 +101,17 @@ export function FeedView({
           <div className="compose-actions">
             <input ref={postMediaInputRef} type="file" accept="image/*,video/*" multiple className="hidden-input" onChange={handlePostMediaUpload} />
             <button type="button" className="btn-secondary" onClick={() => postMediaInputRef.current?.click()} disabled={uploadingMedia} title="Add photo or video">
-              {uploadingMedia ? "Uploading…" : "Attach"}
+              {uploadingMedia ? "Uploading…" : "Attach image or video"}
             </button>
             <button type="button" onClick={handlePost} className="btn-primary" disabled={(!newPost.trim() && postMediaUrls.length === 0) || uploadingMedia}>Post</button>
           </div>
+          {postMediaUrls.length > 0 && (
+            <p className="muted" style={{ fontSize: "0.75rem", margin: "0.25rem 0 0" }}>
+              Attachments are uploaded to nostr.build and are <strong>public</strong> — anyone
+              with the link can view them. Only the link travels inside the image, so a small
+              cover can carry a large video.
+            </p>
+          )}
           <p className="muted char-counter">{newPost.length}/{MAX_NOTE_USER_CONTENT} (appends &quot; Sent by Stegstr.&quot;)</p>
         </div>
       </section>
