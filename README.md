@@ -39,9 +39,12 @@ CI, so a binary can be traced to its source and rebuilt from scratch. Compare
 the checksum of what you downloaded against `SHA256SUMS` on the release page:
 
 ```bash
-sha256sum -c SHA256SUMS          # Linux
-shasum -a 256 -c SHA256SUMS      # macOS
+sha256sum --ignore-missing -c SHA256SUMS      # Linux
+shasum -a 256 --ignore-missing -c SHA256SUMS  # macOS
 ```
+
+`--ignore-missing` matters: `SHA256SUMS` lists every installer, so without it
+the ones you did not download are reported as failures.
 
 ```powershell
 Get-FileHash Stegstr-Windows.exe -Algorithm SHA256    # Windows

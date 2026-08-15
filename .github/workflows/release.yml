@@ -190,7 +190,8 @@ jobs:
         shell: bash
         working-directory: release-assets
         run: |
-          sha256sum ./* > SHA256SUMS
+          # No "./" prefix: it is noise in the output a user reads.
+          sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create release
@@ -215,9 +216,12 @@ jobs:
             alongside the installer and check it:
 
             ```
-            sha256sum -c SHA256SUMS          # Linux
-            shasum -a 256 -c SHA256SUMS      # macOS
+            sha256sum --ignore-missing -c SHA256SUMS      # Linux
+            shasum -a 256 --ignore-missing -c SHA256SUMS  # macOS
             ```
+
+            `--ignore-missing` matters: the file lists every installer, so
+            without it the ones you did not download are reported as failures.
 
             This release was built from `${{ github.sha }}` by the public
             workflow in this repository, so the binary can be traced to its
