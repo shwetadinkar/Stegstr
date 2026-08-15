@@ -1339,11 +1339,35 @@ export function coverGeometry(
  * Converts any image format to JPEG. targetWidth 0 means no resize.
  * Dimensions are snapped to multiples of 8 for DCT block alignment.
  */
+/**
+ * Fail early and legibly if the webview cannot do what the encoder needs.
+ *
+ * QIM runs in the webview on desktop, and that webview is the OS's, not one we
+ * ship: WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux. Every
+ * OffscreenCanvas call here has a document.createElement("canvas") fallback,
+ * but `createImageBitmap` has none, and it only reached Safari in 15 (macOS
+ * 12). On an older macOS the failure would otherwise surface as an opaque
+ * "createImageBitmap is not a function" from deep inside an encode.
+ *
+ * A clear message costs nothing and turns "the app is broken" into something
+ * the user can act on.
+ */
+export function assertImagingSupport(): void {
+  if (typeof createImageBitmap !== "function") {
+    throw new Error(
+      "This system's web engine is too old for image embedding (createImageBitmap "
+      + "is missing). On macOS this needs macOS 12 or later; on Linux, a current "
+      + "WebKitGTK. The browser version at stegstr.com/app works on older systems.",
+    );
+  }
+}
+
 export async function resizeCoverForPlatform(
   coverFile: File,
   targetWidth: number,
   square = false,
 ): Promise<File> {
+  assertImagingSupport();
   const bitmap = await createImageBitmap(coverFile);
   const g = coverGeometry(bitmap.width, bitmap.height, targetWidth, square);
   const { w, h, sx, sy, sw, sh } = g;

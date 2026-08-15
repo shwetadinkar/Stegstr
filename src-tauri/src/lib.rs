@@ -217,125 +217,20 @@ fn get_desktop_path() -> Result<String, String> {
         .ok_or_else(|| "Could not get Desktop path".to_string())
 }
 
-fn qim_cli_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("channel_simulator")
-        .join("qim_cli.py")
-}
-
-#[tauri::command]
-fn encode_stego_qim(cover_path: String, output_path: String, payload: String) -> Result<StegoEncodeResult, String> {
-    let cover = normalize_path(&cover_path);
-    let output = normalize_path(&output_path);
-    let qim_cli = qim_cli_path();
-    if !qim_cli.exists() {
-        return Ok(StegoEncodeResult {
-            ok: false,
-            path: None,
-            error: Some(format!(
-                "QIM script not found at {}. Install channel_simulator deps: pip install jpeglib reedsolo numpy",
-                qim_cli.display()
-            )),
-        });
-    }
-    let payload_b64 = if payload.starts_with("base64:") {
-        payload.trim_start_matches("base64:").to_string()
-    } else {
-        base64::engine::general_purpose::STANDARD.encode(payload.as_bytes())
-    };
-    let output_buf = std::process::Command::new("python3")
-        .arg(&qim_cli)
-        .arg("encode")
-        .arg(cover)
-        .arg(output)
-        .arg(&payload_b64)
-        .output()
-        .map_err(|e| format!("QIM encode failed: {}", e))?;
-    if !output_buf.status.success() {
-        let err = String::from_utf8_lossy(&output_buf.stderr);
-        return Ok(StegoEncodeResult {
-            ok: false,
-            path: None,
-            error: Some(format!("QIM encode failed: {}", err.trim())),
-        });
-    }
-    Ok(StegoEncodeResult {
-        ok: true,
-        path: Some(output.to_string()),
-        error: None,
-    })
-}
-
-#[tauri::command]
-fn decode_stego_qim(path: String) -> Result<StegoDecodeResult, String> {
-    let p = normalize_path(&path);
-    let qim_cli = qim_cli_path();
-    if !qim_cli.exists() {
-        return Ok(StegoDecodeResult {
-            ok: false,
-            payload: None,
-            error: Some(format!(
-                "QIM script not found at {}. Install channel_simulator deps: pip install jpeglib reedsolo numpy",
-                qim_cli.display()
-            )),
-        });
-    }
-    let (tx, rx) = mpsc::channel();
-    let qim_cli = qim_cli.clone();
-    let p_owned = p.to_string();
-    thread::spawn(move || {
-        let out = std::process::Command::new("python3")
-            .arg(&qim_cli)
-            .arg("decode")
-            .arg(&p_owned)
-            .output();
-        let _ = tx.send(out);
-    });
-    let output_buf = match rx.recv_timeout(Duration::from_secs(30)) {
-        Ok(Ok(buf)) => buf,
-        Ok(Err(e)) => {
-            return Ok(StegoDecodeResult {
-                ok: false,
-                payload: None,
-                error: Some(format!("QIM decode failed: {}", e)),
-            });
-        }
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            return Ok(StegoDecodeResult {
-                ok: false,
-                payload: None,
-                error: Some("QIM decode timed out after 30 seconds".to_string()),
-            });
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            return Ok(StegoDecodeResult {
-                ok: false,
-                payload: None,
-                error: Some("QIM decode thread disconnected".to_string()),
-            });
-        }
-    };
-    let stderr_str = String::from_utf8_lossy(&output_buf.stderr);
-    if !output_buf.status.success() {
-        return Ok(StegoDecodeResult {
-            ok: false,
-            payload: None,
-            error: Some(format!("QIM decode failed: {}", stderr_str.trim())),
-        });
-    }
-    let payload_b64 = String::from_utf8_lossy(&output_buf.stdout).trim().to_string();
-    let payload_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&payload_b64)
-        .map_err(|e| format!("QIM payload decode error: {} (stderr: {})", e, stderr_str.trim()))?;
-    let payload_str = format!("base64:{}", base64::engine::general_purpose::STANDARD.encode(&payload_bytes));
-    Ok(StegoDecodeResult {
-        ok: true,
-        payload: Some(payload_str),
-        error: None,
-    })
-}
+// The QIM Python shim used to live here and has been removed.
+//
+// `encode_stego_qim` / `decode_stego_qim` shelled out to
+// channel_simulator/qim_cli.py, resolved through env!("CARGO_MANIFEST_DIR") --
+// the BUILD machine's directory. Every installed copy therefore looked for the
+// script under the CI runner's path and failed, and it also required Python
+// with jpeglib, reedsolo and numpy on the user's machine. No distributed build
+// could ever have worked.
+//
+// QIM now runs in TypeScript in the webview, which is the same code path the
+// browser build and the tests use, so there is one implementation rather than
+// two and no Python dependency. Deleted rather than left unused so it cannot
+// be revived by accident, and so the misleading "QIM script not found" string
+// no longer ships.
 
 #[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
@@ -395,8 +290,6 @@ pub fn run() {
             encode_stego_dot,
             get_dot_capacity,
             check_png_signature,
-            decode_stego_qim,
-            encode_stego_qim,
             get_desktop_path,
             get_test_profile,
             get_exchange_path,
