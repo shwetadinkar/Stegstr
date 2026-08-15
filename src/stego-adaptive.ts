@@ -152,8 +152,13 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // same step, so two identical entries in the picker only invited the
   // question of which one to pick.
   whatsapp_hd: {
-    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    note: "Alias of whatsapp_standard -- HD uploads cap at the same 1600px.",
+    width: 4096, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    note:
+      "HD send: 4096x3072 passes through, confirmed on a real phone. ~25.7KB against " +
+      "3.9KB at 1600 -- 6.6x, the largest capacity gain available anywhere in this app. " +
+      "The HD toggle must be ON for the send; a standard send caps at 1600 and would " +
+      "downscale this, destroying the payload. Width is a cap, not a target, so a " +
+      "4032x3024 phone photo is left untouched rather than upscaled.",
   },
   // 1280, which is what Telegram actually returns (§15.9).
   //
@@ -391,16 +396,25 @@ export const DEFAULT_PLATFORM = "universal";
  * with their platform's name on it got the worse encoder. Every profile now
  * carries the verified tuning, and only distinct geometries are offered.
  *
- * "WhatsApp HD" is deliberately absent rather than merely folded in. HD sends
- * cap at the same 1600px -- measured, and recorded in whatsapp_standard's own
- * note -- so it produces byte-identical output. It has also been dangerous as
- * a visible option once already: it shipped as width 4096, which WhatsApp
- * downscaled to 1600 and which destroyed the payload every time. An entry
- * named for a mode that does not exist at the encoder level invites exactly
- * that mistake, so the Universal label names HD instead.
+ * WhatsApp HD is the exception that earns its own entry, and the record here
+ * was wrong about it twice in opposite directions.
+ *
+ * It first shipped as width 4096 and destroyed payloads, so it was clamped to
+ * 1600 and annotated "HD uploads cap at the same 1600px". That note was wrong:
+ * a phone test confirms an HD send carries 4096x3072 through intact. The
+ * earlier failure is consistent with sending HD-sized images over a STANDARD
+ * send, which does cap at 1600 and downscales -- the geometry mismatch that
+ * §15 records as total loss.
+ *
+ * So the two modes are genuinely different geometries, and the difference is
+ * the largest capacity gain in the app: ~25.7KB against 3.9KB, 6.6x. It is
+ * kept separate from "universal" precisely because choosing it wrongly is
+ * expensive -- with the HD toggle off, this profile's output is downscaled and
+ * lost completely.
  */
 export const USER_PLATFORMS: readonly string[] = [
-  "universal",       // 1600 - WhatsApp incl. HD sends, Twitter/X, Facebook
+  "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
+  "whatsapp_hd",     // 4096 - WhatsApp with the HD toggle on, 6.6x the capacity
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity
   "instagram",       // 1440 square

@@ -10,6 +10,7 @@ import {
 import { RSCodec } from "../reed-solomon";
 import { getQimCapacityBytes, PLATFORM_WIDTHS, DEFAULT_PLATFORM } from "../stego-qim";
 import { PLATFORM_PROFILES, USER_PLATFORMS } from "../stego-adaptive";
+import { coverGeometry } from "../stego-qim";
 
 // ---------------------------------------------------------------------------
 // DCT round-trip tests
@@ -259,7 +260,11 @@ describe("PLATFORM_WIDTHS", () => {
     // Every entry must be at or below what that platform actually emits.
     expect(PLATFORM_WIDTHS.whatsapp_standard).toBeLessThanOrEqual(1600);
     expect(PLATFORM_WIDTHS.telegram_photo).toBeLessThanOrEqual(1920);
-    expect(PLATFORM_WIDTHS.whatsapp_hd).toBeLessThanOrEqual(1600);
+    // HD is a different channel, not a bigger number on the same one: an HD
+    // send carries 4096x3072 through, confirmed on a phone. Sending this over
+    // a STANDARD send caps at 1600 and destroys the payload, which is why the
+    // two are separate entries rather than one.
+    expect(PLATFORM_WIDTHS.whatsapp_hd).toBeLessThanOrEqual(4096);
   });
 
   it("default platform is a verified geometry AND the tuned encoder", () => {
@@ -286,22 +291,47 @@ describe("PLATFORM_WIDTHS", () => {
     }
   });
 
-  it("covers WhatsApp HD, which caps at the same 1600px as a standard send", () => {
-    // The user asked what happened to "WhatsApp HD" after it left the picker.
-    // It is an alias: HD sends cap at 1600 too, so it produces byte-identical
-    // output to universal. Pinning that here means the day WhatsApp raises the
-    // cap, this fails and the alias gets revisited rather than quietly
-    // remaining wrong.
+  it("carries WhatsApp HD at 4096, its own geometry and not an alias", () => {
+    // The record was wrong about this twice, in opposite directions. It first
+    // shipped at 4096 and destroyed payloads, so it was clamped to 1600 and
+    // annotated "HD uploads cap at the same 1600px". A phone test then
+    // confirmed an HD send carries 4096x3072 through intact -- the earlier
+    // failure is consistent with HD-sized images sent over a STANDARD send,
+    // which does cap at 1600 and downscales.
     const hd = PLATFORM_PROFILES.whatsapp_hd;
-    const uni = PLATFORM_PROFILES.universal;
-    expect(hd.width).toBe(uni.width);
-    expect(hd.delta).toBe(uni.delta);
-    expect(hd.lumaAcCount).toBe(uni.lumaAcCount);
-    expect(hd.rsNsym).toBe(uni.rsNsym);
-    expect(hd.square).toBe(uni.square);
-    // And it must never be 4096 again: that shipped once, and WhatsApp
-    // downscaled it to 1600 and destroyed the payload every time.
-    expect(hd.width).toBe(1600);
+    expect(hd.width).toBe(4096);
+    expect(hd.square).toBe(false);
+    // Same tuned encoder as everything else user-facing.
+    expect(hd.lumaAcCount).toBe(6);
+    expect(hd.rsNsym).toBe(32);
+    // It must remain a distinct choice from the standard send: picking the
+    // wrong one is a total loss, not a degradation.
+    expect(hd.width).not.toBe(PLATFORM_PROFILES.universal.width);
+  });
+
+  it("gains roughly 6x the capacity over a standard send", () => {
+    // The reason it is worth a separate entry at all. If this ever collapses
+    // toward the 1600 figure, the profile has stopped doing its job.
+    const opts = { lumaAcCount: 6, rsNsym: 32 };
+    const hd = getQimCapacityBytes(4096, 3072, opts);
+    const std = getQimCapacityBytes(1600, 1200, opts);
+    expect(hd).toBeGreaterThan(20000);
+    expect(hd / std).toBeGreaterThan(5);
+  });
+
+  it("does not upscale a 12MP phone photo to reach 4096", () => {
+    // 4032x3024 is the common 12MP output, just under the cap. Upscaling would
+    // invent detail that is not there, and smooth invented pixels are exactly
+    // where QIM fails. For non-square profiles the width is a cap, not a
+    // target.
+    const g = coverGeometry(4032, 3024, 4096, false);
+    expect(g.w).toBe(4032);
+    expect(g.h).toBe(3024);
+  });
+
+  it("still caps an oversized cover down to 4096", () => {
+    const g = coverGeometry(6000, 4500, 4096, false);
+    expect(g.w).toBe(4096);
   });
 
   it("offers one entry per distinct encoding, with no duplicates", () => {
