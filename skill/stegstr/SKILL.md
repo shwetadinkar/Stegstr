@@ -80,14 +80,26 @@ an image built for `telegram_photo` as a *file* instead of a photo — or the
 reverse — and the processing differs enough to lose the payload.
 
 ```
-universal         1600px    WhatsApp, Twitter, Facebook. The safe default.
-telegram_photo    1280x960  Telegram re-encodes every photo to this.
-telegram_file     no resize Telegram as a file. Largest capacity.
-instagram         1440 sq   Instagram normalises everything to a square.
+whatsapp_hd    4096px    X/Twitter, and WhatsApp with the HD toggle ON.
+                         ~25 KB — six times any other target.
+universal      1600px    WhatsApp normal send, Facebook, X/Twitter. ~3.9 KB.
+                         The safe default when the channel is unknown.
+facebook       2048px    Facebook. ~6.4 KB.
+telegram_photo 1280x960  Telegram re-encodes every photo to this. Also iMessage.
+telegram_file  no resize Telegram as a file. Largest capacity of all.
+instagram      1440 sq   Instagram normalises everything to a square.
 ```
 
-Call `stegstr_platforms` when unsure. Choosing wrong is the most common reason
-hidden data disappears.
+Every one of these was measured on a real device, including the capacity
+figures. Call `stegstr_platforms` for the live table.
+
+**`whatsapp_hd` carries roughly six times as much as anything else**, so prefer
+it whenever the channel is X/Twitter, or WhatsApp with HD switched on. The catch
+is that getting it wrong is a total loss rather than a degradation: sent over a
+*normal* WhatsApp send, a 4096px image is downscaled to 1600 and the payload is
+destroyed. Use `universal` when you do not know how the image will be sent.
+
+Choosing wrong is the most common reason hidden data disappears.
 
 **2. Use a detailed photo.**
 
@@ -100,9 +112,13 @@ outright.
 `stegstr_inspect_cover` scores this. Roughly: above 25 is good, 12–25 is usable,
 below 12 will probably fail.
 
-Also prefer a photo **at least as wide as the target** (1600px for `universal`).
-Photos are never enlarged, so a small one keeps its own size and the platform
-may resize it on arrival — which destroys the payload.
+Also prefer a photo **at least as large as the target** (1600px for
+`universal`, 4096px for `whatsapp_hd`). Photos are never enlarged, so a small
+one keeps its own size and the platform may resize it on arrival — which
+destroys the payload.
+
+Orientation does not matter: the target is a cap on the **long edge**, so a
+portrait photo is handled the same as a landscape one.
 
 ## Example
 

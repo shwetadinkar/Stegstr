@@ -109,7 +109,7 @@ Every platform resizes and re-compresses photos differently. Choosing the right 
 | **X/Twitter** | **Large (4096px)** | Keeps your image's own size up to a 4096 long edge | **~25 KB** |
 | **WhatsApp, HD toggle ON** | **Large (4096px)** | Same — an HD send carries 4096×3072 intact | **~25 KB** |
 | WhatsApp, normal send | **Universal** | 1600×1200 — passed through untouched | ~3.9 KB |
-| Facebook | **Facebook HD** | 2048×1152 — passed through untouched | ~6.4 KB |
+| Facebook | **Facebook** | 2048×1152 — passed through untouched | ~6.4 KB |
 | Telegram, as a photo | **Telegram as photo** | 1280×960 — Telegram re-encodes every photo to this | ~2.5 KB |
 | Telegram, as a file | **Telegram, as file** | No resize — largest capacity of all | biggest |
 | Instagram | **Instagram** | 1440×1440 square — Instagram normalises everything to this | ~3 KB |
@@ -156,6 +156,28 @@ Measured round trips: 1 MB, 5 MB and 10 MB recovered byte-identical, and a 50 MB
 
 ---
 
+## Reading and tidying your feed
+
+**Detect an image** by dropping it on the drop zone, or clicking it to choose a
+file. Nothing merges into your feed automatically — you see exactly what the
+image contained, grouped by author, and choose what to keep.
+
+**Mute an account** from any note. Their posts disappear from your feed on this
+device only: nothing is published, and the author is not told. Undo it in
+**Settings → Muted users**, where you can also mute by keyword.
+
+**Delete several of your own notes at once.** Press **Select** in the feed
+header, tick the notes, then **Delete** — or **Select all** for everything of
+yours currently on screen. Checkboxes appear only on your own notes, because
+nostr has no way to withdraw someone else's note from the network; a button
+implying otherwise would be a lie about what the app can do.
+
+**New notes wait for you.** When posts arrive while you are reading, they are
+held back and offered as a *"N new notes"* button rather than being inserted
+above what you are looking at.
+
+---
+
 ## Privacy and control
 
 - **Nothing merges into your feed automatically.** Opening an image shows you exactly what it contained, grouped by author, with signature status. People you follow are pre-selected; strangers are not. Anyone can send you a photo — that must not be enough to write to your feed.
@@ -164,6 +186,8 @@ Measured round trips: 1 MB, 5 MB and 10 MB recovered byte-identical, and a 50 MB
 - **Recipients-only mode** encrypts the payload for specific people. Holding the image isn't enough to read it.
 - **Your own relays first.** Relay selection uses your configured relays, then lists learned from the network, then defaults.
 - **Adult content is filtered from the Global feed** by default, using authors' own NIP-36 content warnings.
+- **Muting is local.** A published mute list would tell relays, and anyone reading them, exactly whom you have blocked. NIP-51 defines a list for people who want that; this deliberately is not it.
+- **Attachments are fetched only when you click**, never in the background — pre-fetching would tell a third-party server that you had opened a note.
 
 ---
 
@@ -278,7 +302,7 @@ On top of that:
 - **Reed–Solomon error correction** repairs the damage a platform's re-encode does.
 - **Bit repetition with majority voting** adds a second layer of redundancy.
 - **Texture-adaptive step size** varies the strength per region, so more data goes where the image can hide it.
-- **Platform profiles** set geometry and encoder parameters per destination, measured against the real services.
+- **Platform profiles** set geometry and encoder parameters per destination, measured against the real services. The size is a cap on the image's **long edge**, so portrait and landscape covers are handled alike.
 - **A self-test after every embed** decodes the image back before you send it, so a cover that can't carry your data is caught immediately rather than discovered by the recipient.
 
 Payloads are encrypted (AES-GCM), with NIP-44 available for direct messages.

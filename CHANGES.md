@@ -1,7 +1,7 @@
 # What this fork changes
 
 Against upstream `brunkstr/Stegstr` at fork point: **79 commits, 233 files,
-+21,311 / −875 lines.** 335 tests, `tsc --noEmit` clean, `npm run build` clean.
++21,311 / −875 lines.** 343 tests, `tsc --noEmit` clean, `npm run build` clean.
 
 The organising claim: **an image only carries hidden data through a chat app if
 the encoder is matched to what that specific app does to photos.** Everything
@@ -243,6 +243,53 @@ advertise.
 
 ---
 
+### Controls that existed but did nothing
+
+Four shipped features were present, documented, and inert. None was caught by a
+test, because in each case the tests drove the working half.
+
+- **Unfollow** returned before doing anything on a new local identity. The
+  default follows are held by no kind-3 event, and the handler opened with
+  `if (!kind3) return`. Follow had the mirror bug: it started from an empty tag
+  list, so following one account silently dropped the defaults — never
+  reported, because losing follows is invisible in a way a dead button is not.
+- **Attaching** uploaded nothing. `input.files` is a live FileList bound to the
+  element, and the handler cleared `input.value` first — which empties it in
+  place — then read a length of zero and reported "Attached 0 file(s)" as
+  success. jsdom does not model this, so a test driving a real input passes
+  against the broken code; the test uses a double implementing the browser's
+  contract, plus cases asserting the double still reproduces the bug.
+- **`activityBand`** was declarable on a platform profile and read from
+  nowhere. Any evaluation of it done through a profile would have compared an
+  image against a byte-identical image.
+- **"Pick specific notes"** offered only your own, while automatic packing
+  carried notes from anyone you follow. A user who had not posted saw the
+  control disabled while their feed sat full of carryable notes.
+
+### Curation, and a feed that holds still
+
+- **Mute from any note.** The mute list, its feed filter and its unmute UI in
+  Settings all already existed; the only way to *add* to it was pasting a
+  pubkey into Settings by hand, so one account flooding Global had no remedy.
+  Local only — a published mute list tells relays whom you blocked.
+- **Bulk delete** your own notes: Select, tick, Delete, with Select all. One
+  kind-5 tombstone each, because that is the protocol's shape.
+- **The feed stopped jumping.** Images had `max-height` and no reserved box, so
+  every lazy-loaded image expanded from zero height and shoved the page down —
+  continuously, on a feed where images arrive while you read. And new notes
+  prepended above whatever was being read; they are now held back and offered.
+- **Detect merged into the drop zone**, which used to say "or click Detect
+  image below" — two targets for one action.
+
+### Decode sweep deduplicated
+
+Blind detection tries platform profiles, but decoding never resizes: it reads
+the image it was given. So two profiles differing only in width are the same
+attempt run twice. 24 profiles hold **14 distinct decode configurations**, and
+nine of them share one. Worst case dropped from **42 attempts to 22**.
+
+---
+
 ## 6. Testing
 
 **Upstream's e2e harness validated only that permutation matrices were
@@ -253,7 +300,7 @@ A `@napi-rs/canvas` polyfill (OffscreenCanvas, ImageData, createImageBitmap)
 lets the **real shipped encoder** run under vitest, so embed → channel → detect
 is asserted in CI. That is what caught the delta=14 defect.
 
-**284 tests**, covering the encoder round-trip, the relay pool and outbox,
+**343 tests**, covering the encoder round-trip, the relay pool and outbox,
 NIP-44 against spec vectors, capacity packing, the review flow, the pointer
 tier, slot ordering, encrypted attachments, and the desktop bridge.
 
