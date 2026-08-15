@@ -1,8 +1,14 @@
 # Publish the browser build to GitHub Pages.
 #
-# This is the lowest-friction way to try the app: one link, no install, no
-# unsigned-binary warning, and it works on a phone. It is also the build that
-# has been tested most, since development happens against it.
+# One link, no install, no unsigned-binary warning, and it works on a phone.
+# It is also the build with the fewest unknowns, since development and every
+# platform measurement happened against it.
+#
+# Deploys by pushing to a gh-pages branch rather than using
+# actions/deploy-pages. The Pages deployment environment is restricted on
+# forks -- the build job succeeded and uploaded its artifact, and the deploy
+# job failed at setup with no steps run. The branch method has no such
+# restriction.
 name: Deploy web app
 
 on:
@@ -11,18 +17,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
-# Never leave a half-published site: let a running deploy finish rather than
-# cancelling it mid-upload.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,21 +33,22 @@ jobs:
           node-version: "lts/*"
           cache: "npm"
       - run: npm ci
+      # --base /Stegstr/ because Pages serves a project site from that prefix;
+      # built with the default base, every asset tag 404s.
       - run: npm run build:pages
-      # Pages serves static files, so a deep link would 404 on refresh. This
-      # app is a single page, but copying index.html to 404.html costs nothing
-      # and makes any unexpected path land on the app instead of a GitHub error.
-      - run: cp dist/index.html dist/404.html
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Prepare the site
+        run: |
+          cp dist/index.html dist/404.html   # any unexpected path lands on the app
+          touch dist/.nojekyll               # stop Pages hiding files beginning with _
+      - name: Publish to gh-pages
+        run: |
+          cd dist
+          git init -q
+          git checkout -q -b gh-pages
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add -A
+          git commit -q -m "Browser build from ${GITHUB_SHA}"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
