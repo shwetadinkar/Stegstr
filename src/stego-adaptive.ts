@@ -145,7 +145,12 @@ export interface PlatformProfile {
 export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   whatsapp_standard: {
     width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    note: "Caps at 1600px, HD sends included. Measured 0.15-0.38% BER, up to 32KB payload.",
+    note:
+      "Standard send caps the LONG EDGE at 1600, not the width -- measured: a portrait " +
+      "photo comes back 1200x1600. This profile now produces exactly that, so the image " +
+      "passes through untouched in either orientation. Measured 0.15-0.38% BER landscape. " +
+      "A 4096 image sent this way is downscaled to 1600 and the payload is destroyed, which " +
+      "is why the HD profile is a separate entry.",
   },
   // Kept as an alias so any stored reference still resolves, but not offered
   // separately: HD sends were measured to cap at the same 1600px and take the

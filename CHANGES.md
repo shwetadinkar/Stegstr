@@ -26,7 +26,7 @@ block boundaries and reads noise. Every catastrophic failure observed measured
 |---|---|---|
 | **WhatsApp, HD send** | **carries 4096×3072 intact** | **4096 long edge** |
 | **X/Twitter** | **keeps dimensions to a 4096 long edge; file size drops, the pixel grid does not** | **4096 long edge** |
-| WhatsApp, standard send | caps width at 1600; at or below, passes through untouched | 1600×1200 |
+| WhatsApp, standard send | caps the **long edge** at 1600 — a portrait photo comes back 1200×1600; at or below, passes through untouched | 1600 long edge |
 | Telegram, as photo | re-encodes **every** photo to 1280×960 | 1280×960 |
 | Telegram, as file | no recompression at all | no resize |
 | Instagram | normalises everything to a 1440 square | 1440×1440 |
@@ -63,8 +63,16 @@ platform then downscaled it, resampling the 8×8 grid. Total loss, ~50% BER.
 
 Invisible because every phone test used a landscape photo, where width *is* the
 long edge. The symptom was "the recipient's app finds nothing", which points
-nowhere near orientation. Now capped on the long edge, with a test pinning that
-landscape geometry is byte-for-byte unchanged.
+nowhere near orientation.
+
+Now capped on the long edge — and confirmed against the platform itself. WhatsApp
+returns a portrait photo as **1200×1600**, which is exactly what the fixed rule
+now produces, so the image passes through untouched. The old rule sent
+1600×2128, which WhatsApp resized on arrival. A test pins that landscape
+geometry is byte-for-byte unchanged, since that is the path already verified.
+
+Also confirmed on device: a 4096px image sent over a **standard** WhatsApp send
+is downscaled to 1600 and destroyed, exactly as the HD profile's label warns.
 
 **Upstream shipped `instagram: 1080`, and it was the default.** 1080 is upscaled
 to Instagram's 1440 canvas, which measured 42–50% bit error: nothing recovered,
