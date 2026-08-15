@@ -3,7 +3,6 @@ import * as Nostr from "./nostr-stub";
 import { pickImageFile } from "./platform-web";
 import { getQimCapacityForFile } from "./stego-qim";
 import { PLATFORM_PROFILES, profileFor, USER_PLATFORMS } from "./stego-adaptive";
-import { getDotCapacityForFile } from "./stego-dot-web";
 import type { ProfileData } from "./types";
 
 export type StegoMethod = "qim" | "dot";
@@ -70,8 +69,6 @@ export interface EmbedModalProps {
   recipients: string[];
   onRecipientsChange: (recipients: string[]) => void;
   profiles: Record<string, ProfileData>;
-  stegoMethod: StegoMethod;
-  onStegoMethodChange: (method: StegoMethod) => void;
   targetPlatform: string;
   onTargetPlatformChange: (platform: string) => void;
   pointerMode: boolean;
@@ -106,8 +103,6 @@ export function EmbedModal({
   recipients,
   onRecipientsChange,
   profiles,
-  stegoMethod,
-  onStegoMethodChange,
   targetPlatform,
   onTargetPlatformChange,
   pointerMode,
@@ -141,25 +136,21 @@ export function EmbedModal({
     let cancelled = false;
     (async () => {
       try {
-        if (stegoMethod === "qim") {
-          const info = await getQimCapacityForFile(embedCoverFile, targetPlatform);
-          if (!cancelled) {
-            setCapacityInfo(
-              `Capacity: ~${Math.floor(info.capacityBytes / 1024)} KB (${info.width}x${info.height} JPEG)`,
-            );
-          }
-        } else {
-          const bytes = await getDotCapacityForFile(embedCoverFile);
-          if (!cancelled) {
-            setCapacityInfo(`Capacity: ~${Math.floor(bytes / 1024)} KB (PNG)`);
-          }
+        const info = await getQimCapacityForFile(embedCoverFile, targetPlatform);
+        if (!cancelled) {
+          // Show bytes below 1 KB. Math.floor(700/1024) is 0, and "~0 KB" on a
+          // cover that genuinely holds 700 bytes is indistinguishable from the
+          // app failing to read the image -- which is how it was reported.
+          const b = info.capacityBytes;
+          const size = b < 1024 ? `${b} bytes` : `~${(b / 1024).toFixed(1)} KB`;
+          setCapacityInfo(`Capacity: ${size} (${info.width}x${info.height})`);
         }
       } catch {
         if (!cancelled) setCapacityInfo("Could not compute capacity");
       }
     })();
     return () => { cancelled = true; };
-  }, [embedCoverFile, stegoMethod, targetPlatform]);
+  }, [embedCoverFile, targetPlatform]);
 
   const addRecipient = () => {
     const raw = recipientInput.trim();
@@ -220,7 +211,7 @@ export function EmbedModal({
             that no longer applies. */}
         {capacityInfo && (
           <p className="muted" style={{ fontSize: "0.85rem" }}>
-            {pointerMode && stegoMethod === "qim"
+            {pointerMode
               ? `${capacityInfo} — not the limit in pointer mode; a ~200-byte pointer carries your whole feed.`
               : capacityInfo}
           </p>
@@ -232,7 +223,7 @@ export function EmbedModal({
             destroys it -- so burying it behind "Advanced options" put the most
             consequential control in the least visible place. */}
         {/* Platform selector (QIM only) */}
-        {stegoMethod === "qim" && (
+        {(
           <div className="embed-platform-selector" style={{ marginTop: "0.5rem" }}>
             <label className="embed-section-label">Target platform:</label>
             <select
@@ -412,7 +403,7 @@ export function EmbedModal({
             versus a reference that needs the network -- and that is not a
             detail to bury. QIM only: the pointer path is wired through the
             JPEG encoder, and Dot is legacy. */}
-        {stegoMethod === "qim" && (
+        {(
           <div className="embed-pointer-mode" style={{ margin: "0.75rem 0" }}>
             <label style={{ cursor: "pointer" }}>
               <input
@@ -459,28 +450,13 @@ export function EmbedModal({
 
         {showAdvanced && (
           <div className="embed-advanced" style={{ margin: "0.5rem 0", padding: "0.5rem", border: "1px solid #ddd", borderRadius: "4px" }}>
-            {/* Stego method selector */}
-            <div className="embed-method-selector">
-              <label className="embed-section-label">Encoding method:</label>
-              <div style={{ display: "flex", gap: "1rem" }}>
-                <label style={{ cursor: "pointer" }}>
-                  <input type="radio" name="stego-method" checked={stegoMethod === "qim"} onChange={() => onStegoMethodChange("qim")} />
-                  {" "}QIM (JPEG, robust)
-                </label>
-                <label style={{ cursor: "pointer" }}>
-                  <input type="radio" name="stego-method" checked={stegoMethod === "dot"} onChange={() => onStegoMethodChange("dot")} />
-                  {" "}Dot (PNG, legacy)
-                </label>
-              </div>
-            </div>
-
             {/* Slot ordering (§17.4) -- an A/B control, not a setting anyone
                 should need. Present so the same cover and payload can be shot
                 both ways through a real platform and judged by eye, because CI
                 cannot answer which looks better. Decode is unaffected: the
                 blind sweep tries both orderings regardless, so an image made
                 either way still reads. */}
-            {stegoMethod === "qim" && showTestProfiles && (
+            {showTestProfiles && (
               <div className="embed-slot-order" style={{ marginTop: "0.5rem" }}>
                 <label className="embed-section-label">Slot ordering (comparison):</label>
                 <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>

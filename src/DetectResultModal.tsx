@@ -119,8 +119,15 @@ export default function DetectResultModal({
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <h3>Found in this image</h3>
 
+        {/* Lead with what the image HELD, not with how much of it was new.
+            "0 new items" was the first line on a perfectly good decode of your
+            own feed, and reads as "found nothing" when it means "found
+            everything, and you already have it". */}
         <p className="muted" style={{ fontSize: "0.85rem", marginTop: "-0.5rem" }}>
-          {eligible.length} new {eligible.length === 1 ? "item" : "items"}
+          {eligible.length + dupes.length === 0
+            ? "Nothing readable"
+            : `Read ${eligible.length + dupes.length} item${eligible.length + dupes.length === 1 ? "" : "s"}`}
+          {` · ${eligible.length} new`}
           {dupes.length > 0 && ` · ${dupes.length} already had`}
           {invalid.length > 0 && ` · ${invalid.length} failed signature check`}
           {payloadBytes ? ` · ${(payloadBytes / 1024).toFixed(1)} KB recovered` : ""}

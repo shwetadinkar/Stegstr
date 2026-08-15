@@ -243,6 +243,25 @@ advertise.
 
 ---
 
+### One encoder, not three
+
+The embed dialog offered a choice between QIM and a legacy "Dot" method. Measured
+on the same cover, Dot made **twenty times more eye-catching changes** — 0.78% of
+subpixels shifted by more than 40, against 0.04% — because it makes a few huge
+changes (mean delta 94, max 255) where QIM makes small ones almost everywhere
+(mean 6.6). On a flat cover every one of them shows.
+
+Dot also cannot survive a channel that re-encodes, has no self-test (so it
+returned a visibly dotted image and reported success), and disabled both pointer
+mode and platform targeting. QIM already accepts PNG covers, which was the last
+argument for keeping it.
+
+Removed from the picker; the decoder stays, so images already made with it open
+exactly as before, and a test holds that open.
+
+*The CLI remains a third implementation — Rust DWT/LSB in PNG — and is
+documented as the separate legacy path it is.*
+
 ### Controls that existed but did nothing
 
 Four shipped features were present, documented, and inert. None was caught by a

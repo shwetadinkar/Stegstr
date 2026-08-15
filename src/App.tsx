@@ -319,7 +319,16 @@ function App({ profile }: { profile: string | null }) {
   const [dmDecrypted, setDmDecrypted] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
-  const [embedMethod, setEmbedMethod] = useState<StegoMethod>("qim");
+  // QIM only. The Dot encoder was removed from the UI: measured on the same
+  // cover it made 20x more eye-catching changes (0.78% of subpixels shifted by
+  // more than 40, against 0.04%), it cannot survive any channel that
+  // re-encodes, it has no self-test so it hands back a visibly dotted image
+  // and reports success, and it disables both pointer mode and platform
+  // targeting. QIM already accepts PNG covers, which was Dot's last argument.
+  //
+  // The DECODER is still tried on detect, so images already made with Dot open
+  // exactly as before.
+  const embedMethod: StegoMethod = "qim";
   const [targetPlatform, setTargetPlatform] = useState<string>("universal");
   const [embedCoverFile, setEmbedCoverFile] = useState<File | null>(null);
   const [embedRecipientMode, setEmbedRecipientMode] = useState<"open" | "recipients">("open");
@@ -2200,8 +2209,9 @@ function App({ profile }: { profile: string | null }) {
             setDecodeError(
               `This cover image cannot reliably carry your feed at the ${targetPlatform} settings ` +
               `(holds about ${maxPayloadBytes} bytes${lastError ? `; ${lastError}` : ""}). Try a larger or ` +
-              `more textured photo, a platform with a bigger canvas (Facebook 2048px, or Telegram sent ` +
-              `as a file), or the Dot method.`,
+              `more textured photo, a target with a bigger canvas (Large 4096px, Facebook 2048px, or ` +
+              `Telegram sent as a file), or tick "Send a link instead" — a ~260-byte pointer fits where ` +
+              `a full payload cannot.`,
             );
             addStegoLog("Embed cancelled: nothing survives self-test on this cover.");
             setEmbedding(false);
@@ -3522,8 +3532,6 @@ function App({ profile }: { profile: string | null }) {
           recipients={embedRecipients}
           onRecipientsChange={setEmbedRecipients}
           profiles={profiles}
-          stegoMethod={embedMethod}
-          onStegoMethodChange={setEmbedMethod}
           targetPlatform={targetPlatform}
           onTargetPlatformChange={setTargetPlatform}
           pointerMode={embedPointerMode}

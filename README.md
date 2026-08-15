@@ -28,7 +28,7 @@ Stegstr gives you two ways to use it:
 - **UI app** — Desktop and mobile. Write posts, hide them in a photo, and read hidden content out of photos you receive.
 - **CLI module** — Command-line tool for scripts and automation.
 
-Both use the same steganographic format. Data is stored and processed **locally**; Stegstr is **not exclusively Nostr**. You can use it fully offline. When you want to sync over the network, Stegstr acts as a Nostr client and uses relays.
+The app uses one method throughout — QIM in JPEG DCT coefficients — and accepts PNG or JPEG covers. (The CLI is a separate, older implementation; see its section below.) Data is stored and processed **locally**; Stegstr is **not exclusively Nostr**. You can use it fully offline. When you want to sync over the network, Stegstr acts as a Nostr client and uses relays.
 
 ---
 
