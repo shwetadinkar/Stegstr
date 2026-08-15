@@ -39,7 +39,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook HD (2048px — biggest resized canvas)",
   twitter: "Twitter/X (1600px)",
   imessage: "iMessage (1280px)",
-  universal: "Universal (1600px) — WhatsApp, Twitter/X, Facebook",
+  universal: "Universal (1600px) — WhatsApp incl. HD, Twitter/X, Facebook",
   instagram_d40: "Instagram test - step 40",
   instagram_d44: "Instagram test - step 44",
   instagram_d48: "Instagram test - step 48",

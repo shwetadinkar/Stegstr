@@ -286,6 +286,24 @@ describe("PLATFORM_WIDTHS", () => {
     }
   });
 
+  it("covers WhatsApp HD, which caps at the same 1600px as a standard send", () => {
+    // The user asked what happened to "WhatsApp HD" after it left the picker.
+    // It is an alias: HD sends cap at 1600 too, so it produces byte-identical
+    // output to universal. Pinning that here means the day WhatsApp raises the
+    // cap, this fails and the alias gets revisited rather than quietly
+    // remaining wrong.
+    const hd = PLATFORM_PROFILES.whatsapp_hd;
+    const uni = PLATFORM_PROFILES.universal;
+    expect(hd.width).toBe(uni.width);
+    expect(hd.delta).toBe(uni.delta);
+    expect(hd.lumaAcCount).toBe(uni.lumaAcCount);
+    expect(hd.rsNsym).toBe(uni.rsNsym);
+    expect(hd.square).toBe(uni.square);
+    // And it must never be 4096 again: that shipped once, and WhatsApp
+    // downscaled it to 1600 and destroyed the payload every time.
+    expect(hd.width).toBe(1600);
+  });
+
   it("offers one entry per distinct encoding, with no duplicates", () => {
     const seen = new Map<string, string>();
     for (const name of USER_PLATFORMS) {

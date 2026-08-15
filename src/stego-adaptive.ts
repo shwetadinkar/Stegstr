@@ -390,9 +390,17 @@ export const DEFAULT_PLATFORM = "universal";
  * So the specific-looking choice was the trap, and a user picking the entry
  * with their platform's name on it got the worse encoder. Every profile now
  * carries the verified tuning, and only distinct geometries are offered.
+ *
+ * "WhatsApp HD" is deliberately absent rather than merely folded in. HD sends
+ * cap at the same 1600px -- measured, and recorded in whatsapp_standard's own
+ * note -- so it produces byte-identical output. It has also been dangerous as
+ * a visible option once already: it shipped as width 4096, which WhatsApp
+ * downscaled to 1600 and which destroyed the payload every time. An entry
+ * named for a mode that does not exist at the encoder level invites exactly
+ * that mistake, so the Universal label names HD instead.
  */
 export const USER_PLATFORMS: readonly string[] = [
-  "universal",       // 1600 - WhatsApp, Twitter/X, Facebook
+  "universal",       // 1600 - WhatsApp incl. HD sends, Twitter/X, Facebook
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity
   "instagram",       // 1440 square
