@@ -319,6 +319,49 @@ describe("PLATFORM_WIDTHS", () => {
     expect(hd / std).toBeGreaterThan(5);
   });
 
+  it("caps the LONG edge, so a portrait cover is not left oversized", () => {
+    /*
+     * A portrait cover used to come out taller than the platform allows,
+     * because only width was capped: 1600x2133 against a 1600 cap became
+     * 1600x2128. The platform then downscaled it to fit, resampling the 8x8
+     * grid -- the total loss §15 records at ~50% BER.
+     *
+     * Invisible until now because every phone test used a landscape photo,
+     * where width IS the long edge. In portrait it failed on every platform,
+     * and the symptom was "the recipient's app finds nothing", which points
+     * nowhere near orientation.
+     */
+    const portrait = coverGeometry(1600, 2133, 1600, false);
+    expect(Math.max(portrait.w, portrait.h)).toBeLessThanOrEqual(1600);
+
+    const bigPortrait = coverGeometry(5000, 6667, 4096, false);
+    expect(Math.max(bigPortrait.w, bigPortrait.h)).toBeLessThanOrEqual(4096);
+  });
+
+  it("keeps the aspect ratio when capping either orientation", () => {
+    const p = coverGeometry(3000, 4000, 2000, false);
+    expect(p.w / p.h).toBeCloseTo(3000 / 4000, 2);
+    const l = coverGeometry(4000, 3000, 2000, false);
+    expect(l.w / l.h).toBeCloseTo(4000 / 3000, 2);
+  });
+
+  it("leaves a landscape cover exactly as it was before the long-edge fix", () => {
+    // The fix must not move the geometry that WAS verified on a phone.
+    expect(coverGeometry(2133, 1600, 1600, false)).toMatchObject({ w: 1600, h: 1200 });
+    expect(coverGeometry(4032, 3024, 4096, false)).toMatchObject({ w: 4032, h: 3024 });
+  });
+
+  it("X/Twitter keeps the grid up to a 4096 long edge", () => {
+    // Measured on a real account: file size drops, dimensions do not. That is
+    // recompression without resampling, which is exactly what delta 28 exists
+    // to survive -- so the capacity can be taken.
+    expect(PLATFORM_PROFILES.twitter.width).toBe(4096);
+    expect(PLATFORM_PROFILES.twitter.square).toBe(false);
+    const g = coverGeometry(3072, 4096, 4096, false);
+    expect(g.w).toBe(3072);
+    expect(g.h).toBe(4096);
+  });
+
   it("does not upscale a 12MP phone photo to reach 4096", () => {
     // 4032x3024 is the common 12MP output, just under the cap. Upscaling would
     // invent detail that is not there, and smooth invented pixels are exactly

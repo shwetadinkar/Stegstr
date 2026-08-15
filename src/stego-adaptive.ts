@@ -227,8 +227,8 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
     note: "Caps at 2048px (not independently verified).",
   },
   twitter: {
-    width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
-    note: "Caps at 1600px (not independently verified).",
+    width: 4096, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    note: "Keeps dimensions up to a 4096 long edge -- confirmed on a real account: file size drops but the pixel grid is preserved, at 4096 or the original, whichever is smaller. Recompression alone is what delta 28 was chosen to survive. ~25.7KB against 3.9KB at 1600.",
   },
   imessage: {
     width: 1280, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
@@ -414,7 +414,7 @@ export const DEFAULT_PLATFORM = "universal";
  */
 export const USER_PLATFORMS: readonly string[] = [
   "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
-  "whatsapp_hd",     // 4096 - WhatsApp with the HD toggle on, 6.6x the capacity
+  "whatsapp_hd",     // 4096 - X/Twitter, and WhatsApp with the HD toggle on
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity
   "instagram",       // 1440 square

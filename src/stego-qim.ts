@@ -1340,10 +1340,24 @@ export function coverGeometry(
   }
 
   let w = sw, h = sh;
-  if (targetWidth > 0 && (square ? true : w > targetWidth)) {
-    const scale = targetWidth / w;
-    w = targetWidth;
-    h = square ? targetWidth : Math.round(h * scale);
+  if (square) {
+    if (targetWidth > 0) { w = targetWidth; h = targetWidth; }
+  } else if (targetWidth > 0 && Math.max(w, h) > targetWidth) {
+    // Cap the LONG EDGE, not the width.
+    //
+    // This capped width alone, so a portrait cover came out taller than the
+    // platform allows -- 1600x2133 against a 1600 cap became 1600x2128, and
+    // the platform then downscaled it to fit. That is the geometry mismatch
+    // §15 records as total loss: the 8x8 grid is resampled and the decoder
+    // reads noise at ~50% BER.
+    //
+    // It was invisible because every phone test used a landscape photo, where
+    // width IS the long edge. A portrait cover failed silently on every
+    // platform, and the failure looked like "the recipient's app finds
+    // nothing" rather than anything pointing at orientation.
+    const scale = targetWidth / Math.max(w, h);
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
   }
 
   // Snap to whole DCT blocks.
