@@ -569,8 +569,8 @@ export const DEFAULT_PLATFORM = "universal";
 export const USER_PLATFORMS: readonly string[] = [
   "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
   "whatsapp_step20",    // 1600 at step 20 (§27.4) -- verified on device, WhatsApp only
-  "facebook_matched",   // 2048 on the Meta table (§17.12) -- TEST
-  "twitter_step20",     // 4096 at step 20 (§27.4) -- TEST
+  //"facebook_matched",   // 2048 on the Meta table (§17.12) -- TEST
+  "twitter_step20",     // 4096 at step 20 (§27.4)
   "whatsapp_hd",     // 4096 - X/Twitter, and WhatsApp with the HD toggle on
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity
