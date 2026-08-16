@@ -37,7 +37,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   instagram: "Instagram (1440 square)",
   facebook: "Facebook (2048px)",
   facebook_matched: "Facebook — table-matched, step 40 (TEST, 2nd attempt)",
-  twitter_step20: "X/Twitter (4096px) — step 20 (TEST, needs verifying)",
+  twitter_step20: "X/Twitter (4096px) — step 20",
   twitter: "X / Twitter (4096px — 6x capacity, keeps dimensions)",
   imessage: "iMessage (1280px)",
   universal: "Universal (1600px) — WhatsApp, X/Twitter, Facebook",
