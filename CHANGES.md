@@ -413,8 +413,19 @@ Stated plainly because they bound what the numbers above mean.
 - **iMessage geometry is inherited from upstream**, not independently measured.
   It shares the 1280 profile with Telegram-as-photo, which *is* measured, so it
   is a reasonable inference rather than a result.
-- All measurement is one Android phone. WhatsApp Web, Android and iOS do not
-  compress identically.
+- All measurement is one Android phone. **WhatsApp Web and the Android app are
+  different channels, and now measurably so** — their quantization tables were
+  read out of files each returned:
+
+  ```
+  embedding band (zigzag 1-6)
+    WhatsApp Web    2, 2, 2, 2, 2, 3     full table DC=3, range 2-19
+    Android app     6, 6, 6, 7, 6, 7     full table DC=6, range 6-167
+  ```
+
+  Web quantizes the band the payload occupies **three times more finely**, and
+  its high frequencies nine times more finely. A step size verified on Web is
+  not verified on a phone. iOS is untested.
 - **Attachments depend on free public hosts.** Blossom servers may drop blobs
   over time, and the image carries only a reference — so a dropped file is
   unrecoverable. The upload is also visible to the host as *an upload*: it
