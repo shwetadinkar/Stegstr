@@ -450,17 +450,23 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
    * records as the mistake that made a test attribute nothing.
    */
   facebook_matched: {
-    width: 2048, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    width: 2048, square: false, delta: 40, lumaAcCount: 6, rsNsym: 32,
     quantTableZigzag: [
       5,6,6,11,8,11,11,11,11,11,13,11,11,11,13,14,14,13,13,14,14,15,13,14,14,14,13,
       15,16,16,16,17,17,16,16,16,16,15,19,18,19,15,16,17,19,20,20,19,17,19,22,22,22,
       19,22,21,21,22,25,22,25,22,22,18,
     ],
     note:
-      "TEST PROFILE (§17.12). Facebook on the Meta quantization table -- byte-identical " +
-      "to Instagram's, extracted from returned files. 85.3% of the embedding band survives " +
-      "a re-encode on a generic table against 100% on this one, the same gap that made " +
-      "Instagram work. Needs a real Facebook round trip before replacing the default.",
+      "TEST PROFILE, second attempt (§30). The first tried the Meta table alone at step 28 " +
+      "and came back with NOTHING recoverable, while plain Facebook on the same cover " +
+      "worked -- and the cause was never found: the table matched, the geometry matched, " +
+      "the step was if anything stronger on that table, and a simulated 4:2:0 conversion " +
+      "did not reproduce it. Two things changed since: the encoder now writes 4:2:0 like " +
+      "Canvas does (the only difference left between the arm that survived and the arm " +
+      "that did not), and the step is raised to 40 for margin. Both at once ON PURPOSE -- " +
+      "the previous test returned nothing, so there is no result to keep attributable, and " +
+      "what matters now is separating 'marginal' from 'structurally broken'. If this " +
+      "survives, walk the step back down to find out which change mattered.",
   },
 
   /**

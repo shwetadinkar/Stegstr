@@ -124,9 +124,17 @@ describe("bracket profiles left the picker but not the decoder", () => {
     const { PLATFORM_PROFILES } = await import("../stego-adaptive");
     expect(PLATFORM_PROFILES.facebook_matched.quantTableZigzag)
       .toEqual(PLATFORM_PROFILES.instagram.quantTableZigzag);
-    // Step held at 28: Instagram's came down only AFTER a device confirmed the
-    // table. Changing both at once is what §17.7 records as a wasted test.
-    expect(PLATFORM_PROFILES.facebook_matched.delta).toBe(28);
+    /*
+     * Step raised to 40 for the second attempt (§30). Holding one variable is
+     * the right default and was the right call the first time -- but that test
+     * returned NOTHING recoverable, so there is no attributable result to
+     * protect. The encoder also now writes 4:2:0, which was the only remaining
+     * difference between the arm that survived and the arm that did not.
+     *
+     * Both moved deliberately: the question is no longer "which change helps"
+     * but "is this structurally broken or merely marginal".
+     */
+    expect(PLATFORM_PROFILES.facebook_matched.delta).toBe(40);
     expect(PLATFORM_PROFILES.facebook_matched.note).toMatch(/TEST PROFILE/);
   });
 

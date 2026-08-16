@@ -21,11 +21,16 @@
  * Instagram's table was extracted from its own returned files
  * (`calibration/ig_back/*.jpg`) and is byte-identical across all of them.
  *
- * SCOPE. Baseline sequential, 4:4:4, standard Annex K Huffman tables. No
- * progressive mode and no subsampling: both would complicate the decoder for
- * no benefit here, and 4:4:4 leaves chroma untouched for the profiles that use
- * it. This is deliberately the smallest encoder that can carry a chosen
- * quantization table, not a general-purpose one.
+ * SCOPE. Baseline sequential, standard Annex K Huffman tables, no progressive
+ * mode. Chroma subsampling is selectable and defaults to **4:2:0**, which is
+ * what Canvas emits and what every platform measured returns.
+ *
+ * It defaulted to 4:4:4 originally, on the reasoning that leaving chroma at
+ * full resolution could only help. §30 is the counter-example: a table-matched
+ * Facebook upload came back with nothing recoverable while the Canvas-encoded
+ * control survived, and after ruling out the table, the geometry, the step
+ * strength and the chroma conversion itself, 4:4:4 was the only difference
+ * left. Instagram preserved it; Facebook did not.
  */
 
 import { ZIGZAG_2D, forwardDCT8x8, quantize } from "./dct";
@@ -201,6 +206,23 @@ export interface JpegEncodeOptions {
   lumaQT: Float64Array;
   /** Chroma table. Defaults to the luma table when omitted. */
   chromaQT?: Float64Array;
+  /**
+   * Chroma subsampling. Defaults to "4:2:0", which is what Canvas emits and
+   * what every platform measured returns.
+   *
+   * §30 is why this exists. A table-matched Facebook upload came back with
+   * nothing recoverable while the Canvas-encoded control survived, and after
+   * ruling out the table, the geometry, the step strength and the chroma
+   * conversion itself, the only remaining difference was that this encoder
+   * wrote 4:4:4 where Canvas writes 4:2:0. Instagram preserved our 4:4:4;
+   * Facebook did not.
+   *
+   * That is a hypothesis rather than a diagnosis -- the failure could not be
+   * reproduced in simulation. But handing a platform the shape it already
+   * normalises to removes a conversion step instead of relying on it being
+   * lossless, and costs ~30% of the file size.
+   */
+  subsampling?: "4:4:4" | "4:2:0";
 }
 
 /**
@@ -232,12 +254,15 @@ export function encodeJpegWithTable(
   writeDQT(w, 0, lumaQT);
   writeDQT(w, 1, chromaQT);
 
-  // SOF0: baseline, three components, all 1x1 sampled (4:4:4).
+  // SOF0: baseline, three components. Sampling factors must match how the
+  // scan below is interleaved, or a decoder reads the blocks in the wrong
+  // order and produces colour garbage.
+  const sub420 = (opts.subsampling ?? "4:2:0") === "4:2:0";
   w.word(0xffc0); w.word(8 + 3 * 3);
   w.byte(8);
   w.word(height); w.word(width);
   w.byte(3);
-  w.raw([1, 0x11, 0]); // Y  uses table 0
+  w.raw([1, sub420 ? 0x22 : 0x11, 0]); // Y  uses table 0
   w.raw([2, 0x11, 1]); // Cb uses table 1
   w.raw([3, 0x11, 1]); // Cr uses table 1
 
@@ -252,29 +277,67 @@ export function encodeJpegWithTable(
   w.raw([1, 0x00, 2, 0x11, 3, 0x11]);
   w.raw([0, 63, 0]);
 
-  const bw = Math.ceil(width / 8), bh = Math.ceil(height / 8);
+  // Sample a component with edge replication, level-shifted for the DCT.
+  const sample = (
+    out: Float64Array, px0: number, py0: number, step: number,
+    pick: (r: number, g: number, b: number) => number,
+  ) => {
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        // For subsampled chroma each output pixel averages a step x step box,
+        // which is what a 4:2:0 encoder does and what its decoder undoes.
+        let acc = 0, n = 0;
+        for (let dy = 0; dy < step; dy++) {
+          const sy = Math.min(py0 + (y * step) + dy, height - 1);
+          for (let dx = 0; dx < step; dx++) {
+            const sx = Math.min(px0 + (x * step) + dx, width - 1);
+            const p = (sy * width + sx) * 4;
+            acc += pick(rgba[p], rgba[p + 1], rgba[p + 2]);
+            n++;
+          }
+        }
+        out[y * 8 + x] = acc / n;
+      }
+    }
+  };
+
+  const LUMA = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b - 128;
+  const CB_F = (r: number, g: number, b: number) => -0.168736 * r - 0.331264 * g + 0.5 * b;
+  const CR_F = (r: number, g: number, b: number) => 0.5 * r - 0.418688 * g - 0.081312 * b;
+
   const Y = new Float64Array(64), CB = new Float64Array(64), CR = new Float64Array(64);
   let dcY = 0, dcCb = 0, dcCr = 0;
 
-  for (let by = 0; by < bh; by++) {
-    for (let bx = 0; bx < bw; bx++) {
-      for (let y = 0; y < 8; y++) {
-        // Edge blocks replicate the last row/column rather than reading past
-        // the buffer; the decoder discards them via the SOF dimensions.
-        const sy = Math.min(by * 8 + y, height - 1);
-        for (let x = 0; x < 8; x++) {
-          const sx = Math.min(bx * 8 + x, width - 1);
-          const p = (sy * width + sx) * 4;
-          const r = rgba[p], g = rgba[p + 1], b = rgba[p + 2];
-          const i = y * 8 + x;
-          Y[i]  =  0.299 * r + 0.587 * g + 0.114 * b - 128;
-          CB[i] = -0.168736 * r - 0.331264 * g + 0.5 * b;
-          CR[i] =  0.5 * r - 0.418688 * g - 0.081312 * b;
+  if (sub420) {
+    // 4:2:0 MCU: 16x16 pixels as four luma blocks in raster order, then one
+    // Cb and one Cr covering the whole MCU. The interleave order is fixed by
+    // the specification -- a decoder reads them in exactly this sequence.
+    const mcuW = Math.ceil(width / 16), mcuH = Math.ceil(height / 16);
+    for (let my = 0; my < mcuH; my++) {
+      for (let mx = 0; mx < mcuW; mx++) {
+        for (let by = 0; by < 2; by++) {
+          for (let bx = 0; bx < 2; bx++) {
+            sample(Y, mx * 16 + bx * 8, my * 16 + by * 8, 1, LUMA);
+            dcY = writeBlock(w, quantize(forwardDCT8x8(Y), lumaQT), dcY, DC_LUMA, AC_LUMA);
+          }
         }
+        sample(CB, mx * 16, my * 16, 2, CB_F);
+        dcCb = writeBlock(w, quantize(forwardDCT8x8(CB), chromaQT), dcCb, DC_CHROMA, AC_CHROMA);
+        sample(CR, mx * 16, my * 16, 2, CR_F);
+        dcCr = writeBlock(w, quantize(forwardDCT8x8(CR), chromaQT), dcCr, DC_CHROMA, AC_CHROMA);
       }
-      dcY  = writeBlock(w, quantize(forwardDCT8x8(Y),  lumaQT),   dcY,  DC_LUMA,   AC_LUMA);
-      dcCb = writeBlock(w, quantize(forwardDCT8x8(CB), chromaQT), dcCb, DC_CHROMA, AC_CHROMA);
-      dcCr = writeBlock(w, quantize(forwardDCT8x8(CR), chromaQT), dcCr, DC_CHROMA, AC_CHROMA);
+    }
+  } else {
+    const bw = Math.ceil(width / 8), bh = Math.ceil(height / 8);
+    for (let by = 0; by < bh; by++) {
+      for (let bx = 0; bx < bw; bx++) {
+        sample(Y,  bx * 8, by * 8, 1, LUMA);
+        sample(CB, bx * 8, by * 8, 1, CB_F);
+        sample(CR, bx * 8, by * 8, 1, CR_F);
+        dcY  = writeBlock(w, quantize(forwardDCT8x8(Y),  lumaQT),   dcY,  DC_LUMA,   AC_LUMA);
+        dcCb = writeBlock(w, quantize(forwardDCT8x8(CB), chromaQT), dcCb, DC_CHROMA, AC_CHROMA);
+        dcCr = writeBlock(w, quantize(forwardDCT8x8(CR), chromaQT), dcCr, DC_CHROMA, AC_CHROMA);
+      }
     }
   }
 
