@@ -90,8 +90,9 @@ describe("bracket profiles left the picker but not the decoder", () => {
     // list is the thing to update.
     const { USER_PLATFORMS } = await import("../stego-adaptive");
     expect([...USER_PLATFORMS].sort()).toEqual(
-      ["facebook", "instagram", "none", "telegram_file", "telegram_photo",
-       "universal", "whatsapp_step20", "whatsapp_hd"].sort(),
+      ["facebook", "facebook_matched", "instagram", "none", "telegram_file",
+       "telegram_photo", "twitter_step20", "universal", "whatsapp_step20",
+       "whatsapp_hd"].sort(),
     );
   });
 
@@ -114,6 +115,32 @@ describe("bracket profiles left the picker but not the decoder", () => {
     expect(w.note).toMatch(/NOT for Twitter or Facebook/);
     // The general-purpose profile keeps its margin.
     expect(PLATFORM_PROFILES.universal.delta).toBe(28);
+  });
+
+  it("Facebook and Instagram share one Meta quantization table", async () => {
+    // Extracted separately from each platform's own returned files and found
+    // byte-identical -- they are the same pipeline. That is why the fix that
+    // worked for Instagram is available to Facebook for free.
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    expect(PLATFORM_PROFILES.facebook_matched.quantTableZigzag)
+      .toEqual(PLATFORM_PROFILES.instagram.quantTableZigzag);
+    // Step held at 28: Instagram's came down only AFTER a device confirmed the
+    // table. Changing both at once is what §17.7 records as a wasted test.
+    expect(PLATFORM_PROFILES.facebook_matched.delta).toBe(28);
+    expect(PLATFORM_PROFILES.facebook_matched.note).toMatch(/TEST PROFILE/);
+  });
+
+  it("Twitter's experiment is the step, not the table", async () => {
+    // Measured: 100% of the embedding band already survives Twitter's
+    // re-encode on a generic table, because Twitter quantizes zigzag 1-6 at
+    // 3,4,4,4,3,5 -- finer than anything else measured. There is nothing for a
+    // matched table to recover, so the step is the only variable worth moving.
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    const t = PLATFORM_PROFILES.twitter_step20;
+    expect(t.quantTableZigzag).toBeUndefined();
+    expect(t.delta).toBe(20);
+    expect(t.width).toBe(4096);
+    expect(t.note).toMatch(/TEST PROFILE/);
   });
 
   it("Instagram now embeds on Instagram's own quantization table", async () => {

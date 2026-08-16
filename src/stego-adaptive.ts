@@ -434,6 +434,59 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   },
 
   /**
+   * §17.12 TEST: Facebook on the Meta quantization table.
+   *
+   * Facebook returns images quantized with a table BYTE-IDENTICAL to
+   * Instagram's -- both are Meta and share an image pipeline. Extracted from
+   * two returned files at 2048x1152, and identical across them.
+   *
+   * The prize is Instagram's, measured the same way: 85.3% of the embedding
+   * band survives a Facebook re-encode on a generic table, and 100% on this
+   * one. Instagram's equivalent was 85.9% -> 100%, and on a device that turned
+   * a failing channel into three clean round trips at half the step size.
+   *
+   * Step stays at 28 deliberately. Instagram's delta came down only after the
+   * table was confirmed on a device; changing both at once is what §17.7
+   * records as the mistake that made a test attribute nothing.
+   */
+  facebook_matched: {
+    width: 2048, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
+    quantTableZigzag: [
+      5,6,6,11,8,11,11,11,11,11,13,11,11,11,13,14,14,13,13,14,14,15,13,14,14,14,13,
+      15,16,16,16,17,17,16,16,16,16,15,19,18,19,15,16,17,19,20,20,19,17,19,22,22,22,
+      19,22,21,21,22,25,22,25,22,22,18,
+    ],
+    note:
+      "TEST PROFILE (§17.12). Facebook on the Meta quantization table -- byte-identical " +
+      "to Instagram's, extracted from returned files. 85.3% of the embedding band survives " +
+      "a re-encode on a generic table against 100% on this one, the same gap that made " +
+      "Instagram work. Needs a real Facebook round trip before replacing the default.",
+  },
+
+  /**
+   * §27.4 TEST: Twitter at step 20.
+   *
+   * Table matching is NOT the experiment here, because Twitter needs none:
+   * measured, 100% of the embedding band already survives its re-encode on a
+   * generic table. Twitter quantizes zigzag 1-6 at 3,4,4,4,3,5, which is finer
+   * than anything else measured -- which is why it has never been a problem
+   * channel.
+   *
+   * What is worth testing is the step. WhatsApp took 28 -> 20 with eight clean
+   * device round trips, halving the payload's signal above the JPEG noise
+   * floor. Twitter's channel is gentler still, so 20 should hold -- but
+   * "should" is what a device is for.
+   */
+  twitter_step20: {
+    width: 4096, square: false, delta: 20, lumaAcCount: 6, rsNsym: 32,
+    note:
+      "TEST PROFILE (§27.4). X/Twitter geometry at step 20 instead of 28, for a payload " +
+      "that is half as visible above the JPEG noise floor. Twitter needs no table match " +
+      "-- 100% of the embedding band already survives its re-encode -- so the step is the " +
+      "only variable. Needs a real round trip before replacing the default.",
+  },
+
+  /**
    * The maximum-capacity channel. Telegram's "send as file" does not
    * recompress at all, so the only damage a payload takes is this app's own
    * JPEG encode -- no platform resize, no second quantisation. That means the
@@ -509,7 +562,9 @@ export const DEFAULT_PLATFORM = "universal";
  */
 export const USER_PLATFORMS: readonly string[] = [
   "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
-  "whatsapp_step20",    // 1600 at step 20 (§27.4) -- TEST, needs a phone
+  "whatsapp_step20",    // 1600 at step 20 (§27.4) -- verified on device, WhatsApp only
+  "facebook_matched",   // 2048 on the Meta table (§17.12) -- TEST
+  "twitter_step20",     // 4096 at step 20 (§27.4) -- TEST
   "whatsapp_hd",     // 4096 - X/Twitter, and WhatsApp with the HD toggle on
   "telegram_photo",  // 1280 - also iMessage
   "telegram_file",   // no resize, largest capacity

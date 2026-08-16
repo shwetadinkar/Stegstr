@@ -440,7 +440,14 @@ describe("PLATFORM_WIDTHS", () => {
     const seen = new Map<string, string>();
     for (const name of USER_PLATFORMS) {
       const p = PLATFORM_PROFILES[name];
-      const key = `${p.width}|${p.square}|${p.delta}|${p.lumaAcCount}|${p.rsNsym}|${p.chromaDelta}`;
+      // The quantization table belongs in this key. Two profiles at the same
+      // geometry and step that embed on DIFFERENT lattices produce different
+      // files and behave differently on a platform -- that is the whole of
+      // §17.12, and omitting it here would call them duplicates.
+      const key = [
+        p.width, p.square, p.delta, p.lumaAcCount, p.rsNsym, p.chromaDelta,
+        p.quantTableZigzag ? p.quantTableZigzag.join(",") : "-",
+      ].join("|");
       const already = seen.get(key);
       // A second name for the same output is a choice the user cannot make
       // correctly, because both options do exactly the same thing.
