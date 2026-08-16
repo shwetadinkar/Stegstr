@@ -39,7 +39,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   twitter: "X / Twitter (4096px — 6x capacity, keeps dimensions)",
   imessage: "iMessage (1280px)",
   universal: "Universal (1600px) — WhatsApp, X/Twitter, Facebook",
-  whatsapp_step20: "WhatsApp — step 20 (TEST, needs verifying)",
+  whatsapp_step20: "WhatsApp only (1600px) — step 20, less detectable",
   instagram_d40: "Instagram test - step 40",
   instagram_d44: "Instagram test - step 44",
   instagram_d48: "Instagram test - step 48",

@@ -53,19 +53,29 @@ describe("measured platform profiles", () => {
       if (!USER_PLATFORMS.includes(name) && p.lumaAcCount !== undefined) continue;
 
       /*
-       * TEST profiles are exempt for the same reason the bracket profiles are:
-       * they exist to challenge this number on a device, and a profile that
-       * has to clear it cannot test it.
+       * Two exemptions, and the reasoning matters more than the rule.
        *
-       * The threshold is real and was measured against Q75 -- upstream's 14
-       * fails a WhatsApp-like recompression outright. A simulation showing 20
-       * surviving does NOT overturn it: the simulator does not sharpen, and
-       * §15.5 records what trusting the optimistic simulator cost last time.
+       * TEST profiles: they exist to challenge this number on a device, and a
+       * profile required to clear it cannot test it.
        *
-       * What this test protects is that no SHIPPING DEFAULT drops below 26.
-       * That is asserted directly below.
+       * VERIFIED ON DEVICE profiles: the 26 threshold is not a device number.
+       * It came from probing a SYNTHETIC 800x600 cover through a generic
+       * simulated channel at quality 70 (see embed-roundtrip.test.ts) -- and
+       * that probe is harsher in the embedding band than the platform it was
+       * standing in for. WhatsApp quantizes zigzag 1-6 at 6,6,6,7,6,7, which
+       * is fine; the generic Q70 probe is coarser there.
+       *
+       * So a real round trip beats it, for the channel actually measured.
+       * whatsapp_step20 carries eight: four through the Android app and four
+       * through WhatsApp Web, decoded from the returned files. It is scoped to
+       * WhatsApp in its note for exactly that reason -- Twitter and Facebook
+       * share universal's geometry but neither has been checked at step 20.
+       *
+       * The threshold still holds for everything that has NOT been measured on
+       * a device, which is the case it was written for. And no default may
+       * drop below it, asserted directly below.
        */
-      if (/TEST PROFILE/.test(p.note)) continue;
+      if (/TEST PROFILE|VERIFIED ON DEVICE/.test(p.note)) continue;
       expect(p.delta).toBeGreaterThanOrEqual(26);
     }
   });
@@ -76,6 +86,9 @@ describe("measured platform profiles", () => {
     // platform argument resolves to.
     const { DEFAULT_PLATFORM } = await import("../stego-qim");
     expect(/TEST PROFILE/.test(PLATFORM_PROFILES[DEFAULT_PLATFORM].note)).toBe(false);
+    // A below-threshold profile, however well verified, must be chosen
+    // deliberately -- it is scoped to one platform and the default is not.
+    expect(/VERIFIED ON DEVICE/.test(PLATFORM_PROFILES[DEFAULT_PLATFORM].note)).toBe(false);
     expect(PLATFORM_PROFILES[DEFAULT_PLATFORM].delta).toBeGreaterThanOrEqual(26);
   });
 

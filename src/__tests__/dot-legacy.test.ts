@@ -95,14 +95,24 @@ describe("bracket profiles left the picker but not the decoder", () => {
     );
   });
 
-  it("keeps whatsapp_step20 marked as a test, and universal at 28", async () => {
-    // §27.4. Halving the payload's signal above the JPEG floor is worth
-    // testing, but delta 28 is margin and §1 measured delta 14 failing
-    // ERRATICALLY -- passing at one quality and failing at a higher one. The
-    // default must not move on simulator evidence.
+  it("keeps whatsapp_step20 scoped to WhatsApp, and universal at 28", async () => {
+    /*
+     * Step 20 is verified -- eight real round trips, four through the Android
+     * app and four through WhatsApp Web -- and it halves the payload's signal
+     * above the JPEG noise floor, 0.25 against 0.47.
+     *
+     * It is still NOT the default, and the reason is scope rather than doubt.
+     * `universal` also serves Twitter and Facebook, and step 20 was measured
+     * against WhatsApp's quantization table specifically, which is fine in the
+     * embedding band. Neither of the other two has been checked at 20, and a
+     * synthetic cover through a harsher generic channel does fail there.
+     */
     const { PLATFORM_PROFILES } = await import("../stego-adaptive");
-    expect(PLATFORM_PROFILES.whatsapp_step20.delta).toBe(20);
-    expect(PLATFORM_PROFILES.whatsapp_step20.note).toMatch(/TEST PROFILE/);
+    const w = PLATFORM_PROFILES.whatsapp_step20;
+    expect(w.delta).toBe(20);
+    expect(w.note).toMatch(/VERIFIED ON DEVICE/);
+    expect(w.note).toMatch(/NOT for Twitter or Facebook/);
+    // The general-purpose profile keeps its margin.
     expect(PLATFORM_PROFILES.universal.delta).toBe(28);
   });
 

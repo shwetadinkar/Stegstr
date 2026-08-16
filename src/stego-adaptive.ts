@@ -423,10 +423,14 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   whatsapp_step20: {
     width: 1600, square: false, delta: 20, lumaAcCount: 6, rsNsym: 32,
     note:
-      "TEST PROFILE (§27.4). WhatsApp/universal geometry at step 20 instead of 28. " +
-      "Halves the payload's signal above the JPEG noise floor (0.25 against 0.47) at " +
-      "the cost of margin -- step 14 fails erratically through recompression, so 20 is " +
-      "closer to the cliff than 28. Send it several times before trusting it.",
+      "WhatsApp only, step 20. VERIFIED ON DEVICE: four clean round trips through the " +
+      "Android app and four through WhatsApp Web, decoded from the returned files. " +
+      "Halves the payload's signal above the JPEG noise floor -- 0.25 against 0.47 at " +
+      "step 28 -- which is what steganographic invisibility turns on, since most of a " +
+      "stego image's difference is its own JPEG re-encode. NOT for Twitter or Facebook: " +
+      "step 20 is measured against WhatsApp's quantization table, which is fine in the " +
+      "embedding band (6,6,6,7,6,7), and neither of those has been checked. Use Universal " +
+      "for those, or when the channel is unknown.",
   },
 
   /**
