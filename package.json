@@ -21,7 +21,9 @@
     "build:mcp": "esbuild src/mcp-server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist-mcp/server.mjs --external:@napi-rs/canvas",
     "mcp": "npm run build:mcp && node dist-mcp/server.mjs",
     "bench": "esbuild benchmarks/run.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist-mcp/bench.mjs --external:@napi-rs/canvas && node dist-mcp/bench.mjs",
-    "build:pages": "tsc && vite build --base /Stegstr/"
+    "build:pages": "tsc && vite build --base /Stegstr/",
+    "build:cli": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist-cli/stegstr.mjs --external:@napi-rs/canvas",
+    "cli": "npm run build:cli && node dist-cli/stegstr.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
