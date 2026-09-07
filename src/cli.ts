@@ -48,7 +48,7 @@ if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, "crypto", { value: webcrypto, writable: true });
 }
 
-const { PLATFORM_PROFILES, USER_PLATFORMS, profileFor } = await import("./stego-adaptive");
+const { PLATFORM_PROFILES, USER_PLATFORMS, profileFor, DEFAULT_PLATFORM } = await import("./stego-adaptive");
 const {
   encodeQimImageFile, decodeQimImageFile, getQimCapacityForFile, qimSelfTest,
   resizeCoverForPlatform,
@@ -162,7 +162,7 @@ const USAGE = `stegstr — hide data in photos so it survives chat apps
   stegstr detect   --in <image> [--out <file>] [--raw] [--json]
 
 Platforms: ${USER_PLATFORMS.join(", ")}
-Default:   universal
+Default:   ${DEFAULT_PLATFORM}  (used when --platform is omitted)
 
   --raw         embed/extract bytes verbatim, no encryption (for round-trip tests)
   --no-verify   skip decoding the result back before writing (not recommended)
@@ -202,7 +202,7 @@ try {
   }
 
   if (cmd === "capacity") {
-    const platform = str("platform", "universal");
+    const platform = str("platform", DEFAULT_PLATFORM);
     if (!(platform in PLATFORM_PROFILES)) die(`unknown platform '${platform}'`);
     const cap = await getQimCapacityForFile(await fileFrom(resolve(str("in"))), platform);
     emit(
@@ -226,7 +226,7 @@ try {
    * perturbation the encoder is actually responsible for.
    */
   if (cmd === "resize") {
-    const platform = str("platform", "universal");
+    const platform = str("platform", DEFAULT_PLATFORM);
     if (!(platform in PLATFORM_PROFILES)) die(`unknown platform '${platform}'`);
     const prof = profileFor(platform);
     const resized = await resizeCoverForPlatform(
@@ -244,7 +244,7 @@ try {
   }
 
   if (cmd === "embed") {
-    const platform = str("platform", "universal");
+    const platform = str("platform", DEFAULT_PLATFORM);
     if (!(platform in PLATFORM_PROFILES)) {
       die(`unknown platform '${platform}'. Options: ${USER_PLATFORMS.join(", ")}`);
     }

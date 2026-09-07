@@ -89,7 +89,19 @@ describe("measured platform profiles", () => {
     // A below-threshold profile, however well verified, must be chosen
     // deliberately -- it is scoped to one platform and the default is not.
     expect(/VERIFIED ON DEVICE/.test(PLATFORM_PROFILES[DEFAULT_PLATFORM].note)).toBe(false);
-    expect(PLATFORM_PROFILES[DEFAULT_PLATFORM].delta).toBeGreaterThanOrEqual(26);
+    // The step floor used to be a flat 26, from the probe that found delta 14
+    // failing a WhatsApp-like recompression. That probe ran with the adaptive
+    // texture ladder ON, and the ladder is what the threshold was really
+    // measuring: it scales each block's nominal step by 0.55-2.2, so 26
+    // nominal is a much smaller step on most blocks. A profile that steps
+    // flat carries its nominal value everywhere and clears the same channel
+    // lower -- measured, the flat threshold is above 16 and 20 survives every
+    // gauntlet profile on all three covers.
+    //
+    // So the invariant is "at or above the threshold measured for THIS
+    // profile's own stepping mode", not one number for both.
+    const def = PLATFORM_PROFILES[DEFAULT_PLATFORM];
+    expect(def.delta).toBeGreaterThanOrEqual(def.adaptive === false ? 20 : 26);
   });
 
   it("every user-facing platform exists, and no bracket profile is one", () => {
@@ -342,5 +354,102 @@ describe("cover geometry", () => {
     const g = coverGeometry(1234, 987, 0, false);
     expect(g.w).toBe(1232);   // snapped only
     expect(g.h).toBe(984);
+  });
+});
+
+/**
+ * Guards on the two things the robust profile is not allowed to cost.
+ */
+describe("robust fallback, and what it must not disturb", () => {
+  it("is what an unnamed platform resolves to", async () => {
+    const { DEFAULT_PLATFORM } = await import("../stego-qim");
+    expect(DEFAULT_PLATFORM).toBe("robust");
+    expect(profileFor("myspace")).toEqual(PLATFORM_PROFILES.robust);
+  });
+
+  it("does not resize, so a like-for-like PSNR exists", () => {
+    // The contest scored invisibility "n/a" because the encoder resized the
+    // cover, leaving the harness no same-dimension baseline to compare
+    // against. width 0 is what removes that.
+    expect(PLATFORM_PROFILES.robust.width).toBe(0);
+    expect(PLATFORM_PROFILES.robust.square).toBe(false);
+  });
+
+  it("buys survival with redundancy and placement, not amplitude", () => {
+    // The one change that would cost invisibility is a bigger step, and
+    // invisibility is a separately scored category. Measured on three covers,
+    // delta 20, 24 and 28 survive identically once the ladder is off -- so
+    // any step above 20 would be paid for and return nothing.
+    expect(PLATFORM_PROFILES.robust.delta)
+      .toBeLessThanOrEqual(PLATFORM_PROFILES.universal.delta);
+  });
+
+  it("leaves every measured profile exactly as verified on real devices", () => {
+    // These numbers were measured on real phones through real services and
+    // are the entry's actual advantage. A robust FALLBACK must not move them:
+    // the claim being defended is that per-platform targeting wins on real
+    // channels, and that claim dies if the per-platform numbers drift.
+    const verified: Record<string, [number, boolean, number, number, number]> = {
+      // name:            width  square  delta  lumaAcCount  rsNsym
+      universal:        [1600, false, 28, 6, 32],
+      whatsapp_standard:[1600, false, 28, 6, 32],
+      whatsapp_hd:      [4096, false, 28, 6, 32],
+      whatsapp_step20:  [1600, false, 20, 6, 32],
+      instagram:        [1440, true,  28, 6, 32],
+      telegram_photo:   [1280, false, 28, 6, 32],
+      telegram_file:    [0,    false, 20, 6, 32],
+      facebook:         [2048, false, 28, 6, 32],
+      twitter:          [4096, false, 28, 6, 32],
+    };
+    for (const [name, [w, sq, d, zz, rs]] of Object.entries(verified)) {
+      const p = PLATFORM_PROFILES[name];
+      expect(`${name}:${p.width},${p.square},${p.delta},${p.lumaAcCount},${p.rsNsym}`)
+        .toBe(`${name}:${w},${sq},${d},${zz},${rs}`);
+    }
+    // Instagram's matched table, byte for byte.
+    expect(PLATFORM_PROFILES.instagram.quantTableZigzag?.length).toBe(64);
+    expect(PLATFORM_PROFILES.instagram.quantTableZigzag?.slice(0, 6))
+      .toEqual([5, 6, 6, 11, 8, 11]);
+  });
+});
+
+/**
+ * The trap this project has now hit three times: a profile field that the
+ * encoder honours and the blind sweep does not, so the image embeds with one
+ * value and decodes with the default -- i.e. never decodes, and only for
+ * people who are not the author.
+ */
+describe("blind sweep carries every decode-relevant setting", () => {
+  it("selects any profile whose decode needs more than a delta", async () => {
+    const { needsBundledDecode } = await import("../stego-qim");
+    // Phase 3 of the sweep passes delta alone. Anything else a profile
+    // declares has to put it in phase 2 instead.
+    for (const field of ["lumaAcCount", "rsNsym", "repeat", "adaptive",
+                         "activityBand", "quantTableZigzag"] as const) {
+      const p = { width: 0, square: false, delta: 28, note: "", [field]: 
+        field === "adaptive" ? false
+        : field === "activityBand" ? "mid"
+        : field === "quantTableZigzag" ? [1] : 9 } as never;
+      expect(`${field} selected`).toBe(`${field} ${needsBundledDecode(p) ? "selected" : "MISSED"}`);
+    }
+    // A profile with nothing but a delta belongs in phase 3, which is cheaper.
+    expect(needsBundledDecode({ width: 0, square: false, delta: 28, note: "" })).toBe(false);
+  });
+
+  it("routes chroma profiles to the chroma phase, not this one", async () => {
+    const { needsBundledDecode } = await import("../stego-qim");
+    expect(needsBundledDecode(PLATFORM_PROFILES.instagram_chroma_d28)).toBe(false);
+  });
+
+  it("every declared profile is reachable by one phase or another", async () => {
+    const { needsBundledDecode } = await import("../stego-qim");
+    for (const [name, p] of Object.entries(PLATFORM_PROFILES)) {
+      const reachable = p.chromaDelta !== undefined   // phase 1
+        || needsBundledDecode(p)                      // phase 2
+        || (p.lumaAcCount === undefined && p.rsNsym === undefined
+            && p.repeat === undefined && p.adaptive === undefined
+            && p.activityBand === undefined && p.quantTableZigzag === undefined); // phase 3
+      expect(`${name} reachable`).toBe(`${name} ${reachable ? "reachable" : "UNDECODABLE"}`);
+    }
   });
 });

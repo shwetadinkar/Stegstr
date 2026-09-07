@@ -30,7 +30,7 @@ import { RSCodec } from "./reed-solomon";
 
 import { encodeJpegWithTable, zigzagToRaster } from "./jpeg-encode";
 import {
-  PLATFORM_PROFILES, DETECT_DELTAS, profileFor,
+  PLATFORM_PROFILES, DETECT_DELTAS, profileFor, DEFAULT_PLATFORM,
   blockActivity, deltaForBlock, LADDER_MEAN,
   CARRIER_COEFF_ZIGZAG, isCarrierBlock,
   type PlatformProfile,
@@ -104,7 +104,16 @@ export const PLATFORM_WIDTHS: Record<string, number> = Object.fromEntries(
   Object.entries(PLATFORM_PROFILES).map(([k, v]) => [k, v.width]),
 );
 
-export const DEFAULT_PLATFORM = "universal";
+/**
+ * Re-exported, not redeclared.
+ *
+ * This was a second literal `"universal"` sitting a file away from the one in
+ * stego-adaptive.ts, with nothing keeping the two in step -- and they are the
+ * answer to the same question, asked by different callers. Changing the
+ * fallback in one place and not the other would have given the UI one default
+ * and profileFor() another.
+ */
+export { DEFAULT_PLATFORM };
 
 // ---------------------------------------------------------------------------
 // Options
@@ -1195,6 +1204,12 @@ export async function encodeQimImageFile(
   const lumaAcCount = options?.lumaAcCount ?? prof?.lumaAcCount;
   const slotOrder = options?.slotOrder ?? prof?.slotOrder;
   const repeat = options?.repeat ?? prof?.repeat;
+  // The texture ladder is per-profile from here (§19.6). Every named profile
+  // leaves it undefined, which is `true` and unchanged behaviour; `robust`
+  // sets it false because a ladder rung that moves under recompression costs
+  // a whole block, and a channel nobody measured is exactly where that
+  // happens.
+  const adaptive = options?.adaptive ?? prof?.adaptive;
   // activityBand was declarable on a profile and read from nowhere, so setting
   // it there did nothing whatsoever -- the encoder always used the default
   // band. That is worse than the field not existing: it reads as a working
@@ -1206,7 +1221,7 @@ export async function encodeQimImageFile(
     ?? (prof?.quantTableZigzag ? zigzagToRaster(prof.quantTableZigzag) : undefined);
   const result = await embedQim(jpegBytes, payload, {
     ...options, delta, chromaDelta, chromaChannels, rsNsym, lumaAcCount, slotOrder, repeat,
-    activityBand, quantTable,
+    adaptive, activityBand, quantTable,
   });
   return new Blob([result], { type: "image/jpeg" });
 }
@@ -1231,12 +1246,37 @@ export async function encodeQimImageFile(
  * the geometry each platform needs for EMBEDDING, which is real and distinct.
  * It is only the decode sweep that has no use for the distinction.
  */
+/**
+ * Does this profile need its whole settings bundle at decode time?
+ *
+ * Phase 3 of the blind sweep passes `delta` and nothing else. Any profile
+ * whose decode depends on a setting phase 3 does not carry must therefore be
+ * selected into phase 2 and tried as a bundle -- otherwise it embeds with one
+ * value and blind-decodes with the encoder default, which never succeeds.
+ *
+ * Exported so the invariant is a test rather than a comment. Every field
+ * listed here has to be BOTH selected on (this predicate) and forwarded (the
+ * detectQim call in phase 2); `repeat` was forwarded and never selected on,
+ * which is a profile that silently cannot be read back.
+ */
+export function needsBundledDecode(p: PlatformProfile): boolean {
+  return (
+    p.lumaAcCount !== undefined
+    || p.rsNsym !== undefined
+    || p.activityBand !== undefined
+    || p.quantTableZigzag !== undefined
+    || p.repeat !== undefined
+    || p.adaptive !== undefined
+  ) && p.chromaDelta === undefined;
+}
+
 function dedupeByDecodeConfig(profiles: PlatformProfile[]): PlatformProfile[] {
   const seen = new Set<string>();
   const out: PlatformProfile[] = [];
   for (const p of profiles) {
     const key = [
       p.delta, p.lumaAcCount ?? "-", p.rsNsym ?? "-", p.repeat ?? "-",
+      p.adaptive ?? true,
       p.activityBand ?? "high", p.chromaDelta ?? "-", p.chromaChannels ?? "-",
       p.slotOrder ?? "-", p.quantTableZigzag ? p.quantTableZigzag.join(",") : "-",
     ].join("|");
@@ -1291,12 +1331,21 @@ export async function decodeQimImageFile(
       // profile that sets ONLY activityBand must still be tried as a whole
       // bundle, hence the third clause: without it such a profile would fall
       // through to phase 3, which passes delta alone.
+      //
+      // `repeat` is the same trap once more, and it was live: the attempt
+      // below already forwarded prof.repeat and dedupeByDecodeConfig already
+      // keyed on it, but nothing selected a profile INTO this phase on the
+      // strength of repeat alone. A profile carrying only a non-default
+      // repeat therefore fell through to phase 3, which passes delta alone,
+      // so it embedded at its own repeat and blind-decoded at the default 5
+      // -- majority voting over the wrong group size, which never recovers a
+      // bit. Measured before the fix: a repeat-only profile blind-decoded to
+      // "No QIM payload found", while the same repeat carried alongside
+      // lumaAcCount and rsNsym decoded first try. `robust` sets all three so
+      // it was never at risk, but the next profile to set repeat on its own
+      // would have been, silently and only after the image left the machine.
       const zigzagCandidates = dedupeByDecodeConfig(
-        Object.values(PLATFORM_PROFILES).filter(
-          (p) => (p.lumaAcCount !== undefined || p.rsNsym !== undefined || p.activityBand !== undefined
-          || p.quantTableZigzag !== undefined)
-            && p.chromaDelta === undefined,
-        ),
+        Object.values(PLATFORM_PROFILES).filter(needsBundledDecode),
       );
       // Phase 3: plain luma-only sweep, full AC range, chroma disabled --
       // backward compatible with images made before this change and other
@@ -1312,6 +1361,11 @@ export async function decodeQimImageFile(
         result = await detectQim(jpegBytes, {
           ...options, delta: prof.delta, chromaDelta: prof.chromaDelta,
           chromaChannels: prof.chromaChannels, rsNsym: prof.rsNsym, lumaAcCount: prof.lumaAcCount,
+          // Forwarded for the same reason phase 2 forwards it: a chroma
+          // profile that ever sets repeat would otherwise embed at its own
+          // and decode at the default. No chroma profile sets one today, so
+          // this is inert now and a trap closed rather than a fix.
+          repeat: prof.repeat, adaptive: prof.adaptive,
           activityBand: prof.activityBand,
         });
         if (result && result.length > 0) break;
@@ -1333,7 +1387,8 @@ export async function decodeQimImageFile(
             onProgress?.(`zigzag delta ${prof.delta} (${slotOrder})`, attemptNum, totalAttempts);
             result = await detectQim(jpegBytes, {
               ...options, delta: prof.delta, lumaAcCount: prof.lumaAcCount, rsNsym: prof.rsNsym,
-              slotOrder, repeat: prof.repeat, activityBand: prof.activityBand,
+              slotOrder, repeat: prof.repeat, adaptive: prof.adaptive,
+              activityBand: prof.activityBand,
               quantTable: prof.quantTableZigzag ? zigzagToRaster(prof.quantTableZigzag) : undefined,
             });
             if (result && result.length > 0) break;

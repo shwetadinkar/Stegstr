@@ -42,3 +42,4 @@ dist-mcp/
 # A 5MB third-party executable was tracked here (inherited from upstream) in a
 # repository that asks users to verify checksums before running binaries.
 actionlint
+dist-cli/
