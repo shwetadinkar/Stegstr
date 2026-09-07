@@ -75,6 +75,12 @@ describe("bracket profiles left the picker but not the decoder", () => {
       "instagram_chroma_d28", "instagram_chroma_d40", "instagram_chroma_d56",
       "instagram_zz6_d20", "instagram_zz6_d28", "instagram_zz6_d40", "instagram_zz6_d56",
       "whatsapp_standard", "twitter", "imessage", "telegram_photo_1600",
+      // facebook_matched belongs here now. Its own note records the first
+      // attempt returning NOTHING recoverable having moved two variables at
+      // once, so there is no attributable result -- unresolved, and an
+      // unresolved profile should not be advertised in the picker. It stays in
+      // PLATFORM_PROFILES because images were made with it.
+      "facebook_matched",
     ]) {
       expect(`${name}:${name in PLATFORM_PROFILES}`).toBe(`${name}:true`);
       // ...and is deliberately NOT offered in the dialog.
@@ -82,19 +88,25 @@ describe("bracket profiles left the picker but not the decoder", () => {
     }
   });
 
-  it("offers only the shipping platforms, plus the one test profile", async () => {
-    // instagram_matched is offered deliberately (§17.12): it embeds on
-    // Instagram's own quantization table and CANNOT be validated without a
-    // real Instagram round trip, so it has to be selectable to be tested. Its
-    // label says TEST. If it is ever promoted to the default, or dropped, this
-    // list is the thing to update.
+  it("offers only the shipping platforms", async () => {
+    // This list is the picker, and everything on it is something a user can
+    // reasonably choose. If a profile is promoted or dropped, this is the
+    // thing to update.
+    //
+    // facebook_matched was on it and is not any more. It embeds on the Meta
+    // table, which cannot be validated without a real Facebook round trip --
+    // and the one attempt returned nothing recoverable, having changed the
+    // table AND the step in the same round, so it attributed nothing. That is
+    // unresolved rather than negative, and an unresolved profile in the picker
+    // is a setting a user cannot choose correctly. It remains in
+    // PLATFORM_PROFILES for decoding.
     const { USER_PLATFORMS } = await import("../stego-adaptive");
     expect([...USER_PLATFORMS].sort()).toEqual(
       // "robust" is offered as well as being the fallback: it is what the CLI
       // and MCP server use when no platform is named, and a default that
       // cannot be named explicitly is a default nobody can reproduce or
       // compare against.
-      ["facebook", "facebook_matched", "instagram", "none", "robust",
+      ["facebook", "instagram", "none", "robust",
        "telegram_file", "telegram_photo", "twitter_step20", "universal",
        "whatsapp_step20", "whatsapp_hd"].sort(),
     );

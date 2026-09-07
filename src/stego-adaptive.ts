@@ -716,7 +716,14 @@ export const USER_PLATFORMS: readonly string[] = [
   "robust",          // no resize - the default when the channel is unknown
   "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
   "whatsapp_step20",    // 1600 at step 20 (§27.4) -- verified on device, WhatsApp only
-  //"facebook_matched",   // 2048 on the Meta table (§17.12) -- TEST
+  // facebook_matched is deliberately NOT here, and the commenting-out is the
+  // decision rather than an oversight. Its first and only real-account attempt
+  // returned nothing recoverable while plain Facebook worked on the same cover
+  // -- and it moved the quantization table AND the step in the same round, so
+  // the result attributes to neither. Unresolved, not disproved. An unresolved
+  // profile in the picker is a setting nobody can choose correctly, so it stays
+  // in PLATFORM_PROFILES for decoding and out of the list users see.
+  //"facebook_matched",   // 2048 on the Meta table (§17.12) -- unresolved, decode-only
   "twitter_step20",     // 4096 at step 20 (§27.4)
   "whatsapp_hd",     // 4096 - X/Twitter, and WhatsApp with the HD toggle on
   "telegram_photo",  // 1280 - also iMessage
