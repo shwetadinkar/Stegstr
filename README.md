@@ -12,11 +12,11 @@ Everything below was measured against the real services on a real device, and th
 |---|---|
 | **6.6× the hidden capacity** | X/Twitter and WhatsApp HD keep a 4096px image intact, carrying **~25 KB per photo** against 3.9 KB at 1600px. Verified end to end on a phone. |
 | **Every channel measured** | WhatsApp (normal and HD), Telegram (as photo and as file), Instagram, X/Twitter and Facebook — each confirmed by sending an image through it and reading the payload back. |
-| **Instagram matched at the format level** | The encoder writes JPEG on **Instagram's own quantization table**, extracted from images Instagram returned. Its re-encode then has nothing to change: 100% of the hidden data survives, against 85.9% on a generic table. Three consecutive clean round trips where the previous profile failed — at half the step size, so the photo is visibly cleaner too. |
+| **Instagram matched at the format level** | The encoder writes JPEG on **Instagram's own quantization table**, extracted from images Instagram returned. Its re-encode then has nothing to change: 100% of the hidden data survives, against 85.9% on a generic table. Three consecutive clean round trips where the previous profile failed — at half the step size, so the photo is visibly cleaner too. **Instagram is the only target that ships a matched table.** Facebook returns the same Meta table, but the profile built on it (`facebook_matched`) is an unresolved test, not a result — see [CHANGES.md](CHANGES.md). Plain **Facebook** encodes on a generic table and is the one that was verified end to end. |
 | **Encrypted attachments, any file type** | Documents, video, archives. Encrypted before upload; the host stores ciphertext and never learns the filename or the type. 50 MB tested. |
 | **Pointer mode** | A ~260-byte reference in the photo, content encrypted on a relay — for channels too tight for a full payload. |
 | **Built for AI agents** | An MCP server exposing the same encoder the app uses, so an agent can embed and detect directly. |
-| **358 tests** | Including the real shipped encoder driven through a simulated channel, which is what caught a step size that failed on a phone while passing every unit test. |
+| **380 tests** | 380 passing and 4 skipped (a live-network suite, opt-in via `STEGSTR_LIVE=1`). They include the real shipped encoder driven through a simulated channel, which is what caught a step size that failed on a phone while passing every unit test. |
 
 The organising claim, and the reason most of this exists: **an image only carries hidden data through a chat app if the encoder is matched to what that specific app does to photos.** Get the geometry wrong and the payload is not degraded — it is destroyed.
 
@@ -136,13 +136,81 @@ Every platform resizes and re-compresses photos differently. Choosing the right 
 | Telegram, as a photo | **Telegram as photo** | 1280×960 — Telegram re-encodes every photo to this | ~2.5 KB |
 | Telegram, as a file | **Telegram, as file** | No resize — largest capacity of all | biggest |
 | Instagram | **Instagram** | 1440×1440 square, encoded on Instagram's own quantization table | ~3 KB |
-| Not sure / may be forwarded | **Universal** | 1600px — safe on WhatsApp, X/Twitter and Facebook | ~3.9 KB |
+| Not sure, or it may be forwarded | **Robust** *(default)* | No resize — keeps your image's own size, and settles for redundancy instead of guessing a channel | ~4 KB on a 1920px photo |
+| A known 1600px channel | **Universal** | 1600px — WhatsApp normal send, X/Twitter, Facebook | ~3.9 KB |
+
+### The default target: Robust
+
+**If you do not name a platform, you get Robust.** That is what the CLI, the
+MCP server and any API caller use when the argument is omitted.
+
+Every other target answers a channel somebody measured: a geometry a real
+service was observed to return, and a step size probed against that service's
+own quantization table. Robust answers the case those cannot — nobody said
+where the image is going, so there is no table to match and no geometry to
+pre-empt. It does not resize, and it turns off the texture-adaptive step for
+the reason described under [How it works](#how-it-works).
+
+It used to be **Universal**, which is tuned — but tuned *for* something. 1600px
+because WhatsApp returns 1600; step 28 because WhatsApp's table quantizes the
+embedding band at 6,6,6,7,6,7. That is the right answer for WhatsApp and a
+guess otherwise, and measured blind against generic recompression it carried
+data through 40% of the test profiles. Robust carries it through 100%, on a
+busy photo, a gradient and a smooth cover alike, and does it at a *smaller*
+step — so the image is no more marked than before.
+
+**Name your platform when you know it.** Robust is deliberately generic; a
+measured profile matches a real service's geometry and quantization table, and
+that is still the thing this project is for. Robust exists so that not knowing
+is no longer the worst case.
 
 **Instagram and Telegram-as-photo need their own targets** — Instagram normalises to a 1440 square and Telegram re-encodes every photo to 1280×960, so a 1600px image is resized by both and the data goes with it.
 
 **Large (4096px) carries about six times as much**, and both channels are verified end to end on a real device. It is not the default because getting it wrong is expensive: sent over a *normal* WhatsApp send, a 4096px image is downscaled to 1600 and the hidden data is destroyed completely. Use it when you know the channel; use **Universal** when you don't.
 
 **Getting this wrong is the main reason hidden data disappears.** If a platform resizes your image, the data goes with it. Matching the platform's own output size is what keeps it intact.
+
+### Two measurements behind that, with the files committed
+
+**Telegram as a photo, verified both ways.**
+[`calibration/telegram_returns/`](calibration/telegram_returns/) holds a send
+and its return from a real Telegram account, with checksums. A 1280×960 cover
+came back 1280×960 and the payload read back through the CLI — the first
+round trip at this geometry, which the profile previously only inferred.
+Telegram re-encodes on a scaled Annex K table near Q87, finer than the
+send-side table, so the embedding band survives its second quantisation.
+
+The same directory holds the **negative**, which is the more useful half: the
+same payload in a 4096×3072 cover came back 1280×960 with **nothing
+recoverable**. The payload is provably in the file that was sent and provably
+gone from the file that came back, and the only thing in between is the
+downscale. Resampling shifts the 8×8 DCT grid, so the decoder walks
+coefficients that were never written — a total loss with no partial recovery to
+fall back on. That is why Telegram-as-photo targets 1280 and why
+Telegram-as-file exists for anything larger.
+
+**WhatsApp HD keeps your pixels, and rotates them.**
+[`calibration/whatsapp_hd_returns/`](calibration/whatsapp_hd_returns/): a
+3840×2160 upload came back with its 3840 long edge intact, where the same
+pipeline's *normal* send caps a 4096px image at 1600×1200. The two modes also
+quantize differently — HD at 4/19/12.2 against the normal send's 6/167/35.6 —
+confirmed across two geometries, so it is the send mode that picks the table,
+not the image size.
+
+It also **applies EXIF orientation physically and drops the flag**: that upload
+was `orientation=6` at 3840×2160 and came back 2160×3840 with no orientation
+tag. A 90° rotation is not a degradation of hidden data, it is the end of it —
+the grid is transposed and the decoder reads coefficients that were never
+written. Measured here: an upright stego image decodes, the same image rotated
+90° recovers nothing.
+
+**This encoder is not exposed to that**, because it rasterises the cover
+through the same orientation-applying path and writes output through canvas,
+which emits no EXIF — so what leaves is already upright with no flag and
+WhatsApp has nothing left to act on. `src/__tests__/exif-orientation.test.ts`
+holds that open. Without it, every payload sent to WhatsApp from a portrait
+phone photo would die silently, and the failure would look like "the
+recipient's app finds nothing".
 
 ---
 
@@ -238,32 +306,117 @@ Uploads are signed, so you must be logged in, and they go to a host, so Network 
 
 ---
 
-## Command-line interface (CLI) — legacy
+## Command-line interface
 
-**Read this before using it.** The CLI is an older, separate implementation and
+Two command-line tools ship in this repo, and they are not interchangeable.
+This one — `stegstr` — drives the **same QIM encoder the app and the MCP server
+use**, so anything it produces carries the platform measurements. The Rust
+`stegstr-cli` below is the older PNG method and does not.
+
+```bash
+npm install && npm run build:cli
+node dist-cli/stegstr.mjs --help
+```
+
+### Commands
+
+```
+stegstr platforms [--json]
+stegstr capacity --in <cover> [--platform <name>] [--json]
+stegstr resize   --in <cover> --out <file> [--platform <name>] [--json]
+stegstr embed    --in <cover> --out <file> (--message <text> | --payload-file <path>)
+                 [--platform <name>] [--raw] [--no-verify] [--json]
+stegstr detect   --in <image> [--out <file>] [--raw] [--json]
+```
+
+| | |
+|---|---|
+| `platforms` | List the targets, their geometry and what each is for |
+| `capacity` | How many bytes this cover carries for a target, before you embed |
+| `resize` | Write the cover through a target's geometry with **nothing embedded** — the baseline for a like-for-like comparison |
+| `embed` | Hide a payload. Decodes the result back before writing unless `--no-verify` |
+| `detect` | Recover a payload. Needs no hints — it identifies the settings itself |
+
+Omit `--platform` and you get **Robust**, the unnamed-channel default.
+
+### Flags
+
+- `--raw` — embed and extract bytes verbatim, no encryption. This is what a
+  survival test wants: embed known bytes, push the image through a channel,
+  recover, compare. Encryption in the loop only adds a way for the comparison
+  to fail for reasons that have nothing to do with the channel.
+- `--no-verify` — skip decoding the result back before writing. Not recommended.
+- `--json` — machine-readable output.
+
+### Built to be driven by a machine
+
+**`--json` puts a structured object on stdout and everything else on stderr**,
+so the two never interleave and a harness can `JSON.parse(stdout)` without
+filtering prose out of it first.
+
+**Exit codes are distinct per failure mode**, so a caller can branch without
+parsing messages:
+
+| code | meaning |
+|---|---|
+| `0` | success |
+| `1` | usage error, or something unexpected |
+| `2` | payload exceeds capacity for that platform |
+| `3` | embed succeeded but failed read-back verification |
+| `4` | detect found no Stegstr payload |
+
+The distinction between 2, 3 and 4 is the point. "Too large", "written but
+unverifiable" and "nothing there" are different results, and collapsing them
+into one non-zero exit is how a harness ends up reporting a capacity limit as a
+codec failure.
+
+### Example: measure survival end to end
+
+```bash
+npm run build:cli
+head -c 800 /dev/urandom > payload.bin
+
+node dist-cli/stegstr.mjs embed  --in cover.jpg --out stego.jpg \
+     --payload-file payload.bin --raw --json
+# ...push stego.jpg through a channel, or through judge_harness.py...
+node dist-cli/stegstr.mjs detect --in returned.jpg --raw --out recovered.bin
+cmp payload.bin recovered.bin && echo "survived"
+```
+
+`judge_harness.py` in the repo root does exactly this across five recompression
+profiles and reports survival and PSNR. It drives the CLI, so it measures the
+shipped encoder rather than a copy of it.
+
+---
+
+## Legacy CLI (`stegstr-cli`, Rust/PNG)
+
+**Read this before using it.** This CLI is an older, separate implementation and
 **does not produce images that survive chat apps.** It embeds in the LSB of
 wavelet detail coefficients and writes PNG; WhatsApp, Telegram-as-photo,
 Instagram, Facebook and X all re-encode uploads to JPEG, and JPEG quantisation
 discards exactly the detail those bits live in.
 
 Everything this fork measured — the platform geometry, the 4096px capacity, the
-step size — belongs to the **QIM** encoder, which the app and the MCP server
-use. The CLI does not share it.
+step size — belongs to the **QIM** encoder, which the app, the MCP server and
+the `stegstr` CLI above all share. `stegstr-cli` does not.
 
 | | survives a chat app | notes |
 |---|---|---|
 | App (browser or desktop) | **yes** | QIM in JPEG DCT, measured on real devices |
 | MCP server | **yes** | same encoder as the app |
-| CLI | **no** | PNG only, for direct file transfer |
+| `stegstr` CLI (Node) | **yes** | same encoder as the app; JPEG, takes a platform target |
+| `stegstr-cli` (Rust) | **no** | the legacy method — PNG only, for direct file transfer |
 
 **Use the CLI when the file will not be re-encoded** — Telegram *sent as a
 file*, email attachments, USB, cloud storage. PNG is lossless, so the bytes
 arrive exactly as sent and the payload is intact.
 
-**For anything going through a chat app, use the [MCP server](#for-ai-agents-mcp)**,
-which exposes the same encoder the app uses and takes a platform target.
+**For anything going through a chat app, use the `stegstr` CLI above or the
+[MCP server](#for-ai-agents-mcp)** — both expose the same encoder the app uses
+and take a platform target.
 
-> Not yet measured: we have not sent a CLI-made PNG through a platform and
+> Not yet measured: we have not sent a `stegstr-cli`-made PNG through a platform and
 > recorded the result. The reasoning above follows from how those pipelines
 > behave, and matches how the JPEG-domain encoder was arrived at, but it is an
 > inference rather than a measurement — and this project has been wrong that way
@@ -355,7 +508,37 @@ On top of that:
 
 - **Reed–Solomon error correction** repairs the damage a platform's re-encode does.
 - **Bit repetition with majority voting** adds a second layer of redundancy.
-- **Texture-adaptive step size** varies the strength per region, so more data goes where the image can hide it.
+- **Texture-adaptive step size** varies the strength per region, so more of the
+  perturbation lands where the image can hide it. **It is off in the default
+  profile**, and the reason is worth stating plainly: it is not a free win, and
+  on detailed photos going through hard recompression it is worse than doing
+  nothing.
+
+  The ladder gives each block a step derived from that block's own texture, and
+  the decoder has to derive the same number from the image the channel handed
+  back. Hard recompression flattens the coefficients the measurement reads, so
+  blocks migrate to a different rung between embed and decode — and every bit
+  in a migrated block is then read at the wrong step. That is whole-block
+  error, which is exactly what Reed–Solomon and majority voting cannot absorb;
+  both assume errors are sparse and independent.
+
+  Measured on a 1920×1080 photo carrying 800 bytes, through five recompression
+  profiles, with no platform named:
+
+  ```
+  ladder on    40% survived    and raising the step to 40 did not change it
+  ladder off  100% survived    at a SMALLER step than the ladder was using
+  ```
+
+  Bit repetition (5 → 9 → 15 → 21) and Reed–Solomon parity (32 → 64 → 96) both
+  saturated at 60%. Three levers reaching the same ceiling is what identified
+  the ladder rather than margin as the cause.
+
+  Smooth and gradient covers never showed it — almost every block there sits on
+  the lowest rung with nothing near a boundary, so no rung can move. It is a
+  detailed-photo failure, which is why it survived so long. The ladder stays on
+  for the per-platform profiles, where the channel is known and measured and
+  the recompression is gentler than the worst case above.
 - **Platform profiles** set geometry and encoder parameters per destination, measured against the real services. The size is a cap on the image's **long edge**, so portrait and landscape covers are handled alike.
 - **A self-test after every embed** decodes the image back before you send it, so a cover that can't carry your data is caught immediately rather than discovered by the recipient.
 

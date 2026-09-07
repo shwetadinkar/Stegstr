@@ -128,16 +128,24 @@ export interface PlatformProfile {
    * the normal case. Omitted = "ac-major", the original behaviour.
    */
   slotOrder?: "ac-major" | "spread";
-  /**
-   * Skip blocks whose texture score (zigzag 7-24, see CARRIER_COEFF_ZIGZAG)
-   * falls below this, so the flattest regions carry nothing (§17.14).
+  /*
+   * `textureFloor` used to be declared here (§17.14: skip blocks whose texture
+   * score falls below a threshold, so the flattest regions carry nothing).
    *
-   * Only valid with `lumaAcCount` at or below 6: the measurement band must sit
-   * above every position the encoder writes, or embedding moves the number the
-   * decoder needs to reproduce. Omitted = every block carries data, the
-   * original behaviour.
+   * It is gone because encodeQimImageFile never read it. Setting it on a
+   * profile did nothing at all -- not "nothing yet", nothing -- while reading
+   * as a working switch, which is the same defect §19.6 records for
+   * activityBand and is worse than the field not existing: any evaluation of
+   * the floor done by setting it on a profile would have compared an image
+   * against an identical image.
+   *
+   * The option still exists and still works on QimOptions, where the encoder
+   * does read it, and texture-select.test.ts exercises it there. If it is ever
+   * wanted per-profile, it has to be added to the read list in
+   * encodeQimImageFile AND to needsBundledDecode in stego-qim.ts -- it changes
+   * which blocks carry data, so a decoder that does not know about it reads
+   * the wrong blocks entirely.
    */
-  textureFloor?: number;
   /**
    * Which coefficients the adaptive step ladder measures texture on (§19.6).
    *
@@ -162,6 +170,37 @@ export interface PlatformProfile {
    * abundance. Omitted = the QIM default of 5.
    */
   repeat?: number;
+  /**
+   * Scale the QIM step by local texture (§19.6 ladder). Omitted = true, the
+   * encoder default and every named profile's behaviour.
+   *
+   * Setting it false is a robustness trade, not a tuning knob. The ladder
+   * places energy where texture masks it -- measured 2x less visible
+   * perturbation at the same payload -- by giving each block a step chosen
+   * from its own activity score. Both sides must derive the SAME score, and
+   * the decoder derives it from the image the channel handed back.
+   *
+   * On a smooth or gradient cover that is safe: nearly every block sits on
+   * the lowest rung with nothing near a boundary, so no amount of
+   * recompression moves one. On a BUSY cover it is not. The score is read
+   * from quantized zigzag 25-40, and a hard recompression crushes exactly
+   * that band, so blocks migrate down the ladder between embed and decode.
+   * A block that moves is not one bad bit -- it is every bit in that block
+   * read at the wrong step, which is why neither repetition nor Reed-Solomon
+   * clears it: the errors arrive in whole blocks, not sprinkled.
+   *
+   * Measured on a 1920x1080 photo, 800 B, delta 28, repeat 15, rsNsym 32:
+   *
+   *   adaptive on    q90 OK  q75 OK  q60 OK  q45 FAIL
+   *   adaptive off   q90 OK  q75 OK  q60 OK  q45 OK
+   *
+   * and raising delta to 40 did not rescue the adaptive arm, which is the
+   * proof that the failure is misclassification rather than amplitude.
+   *
+   * MUST match between embed and decode, so like lumaAcCount and repeat it
+   * has to be carried by the blind sweep in decodeQimImageFile.
+   */
+  adaptive?: boolean;
 }
 
 /**
@@ -185,10 +224,21 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
       "A 4096 image sent this way is downscaled to 1600 and the payload is destroyed, which " +
       "is why the HD profile is a separate entry.",
   },
-  // Kept as an alias so any stored reference still resolves, but not offered
-  // separately: HD sends were measured to cap at the same 1600px and take the
-  // same step, so two identical entries in the picker only invited the
-  // question of which one to pick.
+  // A DISTINCT geometry and its own picker entry, not an alias.
+  //
+  // This comment used to say the opposite -- "kept as an alias, not offered
+  // separately, HD sends cap at the same 1600px" -- which was written when the
+  // profile was clamped to 1600 after 4096 destroyed payloads. A phone test
+  // then carried 4096x3072 through an HD send intact, and the earlier failure
+  // is consistent with HD-sized images sent over a STANDARD send, which does
+  // cap at 1600 and downscales.
+  //
+  // Confirmed again 2026-09-07 (calibration/whatsapp_hd_returns): 3840x2160
+  // up, 3840 long edge back, against 1600x1200 for the same pipeline's
+  // standard send. The two modes also quantize differently -- HD at
+  // 4/19/12.2, standard at 6/167/35.6 -- so they are not the same channel by
+  // any measure. It is in USER_PLATFORMS deliberately: the difference is the
+  // largest capacity gain in the app, ~25.7KB against 3.9KB.
   whatsapp_hd: {
     width: 4096, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note:
@@ -212,8 +262,13 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
   // that was sent rather than the file that came back, which is the same
   // mistake that produced a false PASS on 2026-08-13.
   //
-  // UNVERIFIED at 1280: the observation that Telegram outputs 1280x960 is
-  // solid, but no payload has yet been round-tripped at this geometry.
+  // VERIFIED at 1280 on 2026-09-07 (calibration/telegram_returns): a 1280x960
+  // cover was sent through a real Telegram account and the payload read back
+  // from the returned file. Telegram re-encodes on a scaled Annex K table near
+  // Q87 -- finer than the send-side table, so the embedding band survives the
+  // second quantisation. The same directory holds the negative: the same
+  // payload in a 4096x3072 cover comes back 1280x960 with nothing recoverable,
+  // which is the resampling loss this geometry exists to avoid.
   // rsNsym 32 and lumaAcCount 6, matching `universal` (§15.12). The default
   // rsNsym of 128 spent half of every 255-byte codeword on parity, which at
   // 1280x960 meant 2.51 AC positions modified per block against universal's
@@ -380,19 +435,98 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
    * Deliberately ignores Instagram.
    *
    * Instagram is the only platform that forces a 1440 square canvas and the
-   * only one that sharpens, which is why it needs step 56 where every other
-   * measured platform survives at 28. Carrying Instagram's requirements here
-   * made every WhatsApp and Telegram user pay twice the perturbation -- the
-   * exact cost this project is judged on -- to satisfy a platform they were
-   * not sending to, and which offers no native way to download the image
-   * back anyway. Instagram is now a deliberate side target: pick its own
-   * profile when you actually want it.
+   * only one that sharpens. Carrying its requirements here made every
+   * WhatsApp and Telegram user pay for a platform they were not sending to,
+   * and which offers no native way to download the image back anyway.
+   * Instagram is a deliberate side target: pick its own profile for it.
+   *
+   * The step is no longer the reason. When this was written Instagram needed
+   * 56 against everyone else's 28, so the cost of including it was double the
+   * perturbation. Matching Instagram's own quantization table (§17.12) then
+   * brought it down to 28 as well, so today the two profiles differ in canvas
+   * and table, not amplitude. The geometry argument stands on its own: a 1440
+   * square is wrong for every non-Instagram channel.
    */
   universal: {
     width: 1600, square: false, delta: 28, lumaAcCount: 6, rsNsym: 32,
     note: "1600px, step 28. Verified through WhatsApp. Also sized for Twitter and Facebook. "
       + "NOT for Telegram as photo -- Telegram re-encodes to 1280x960 and would resample this; "
-      + "use the Telegram profiles for that. Not for Instagram, which needs 1440 square, step 56.",
+      + "use the Telegram profiles for that. Not for Instagram, which needs a 1440 square canvas "
+      + "and its own quantization table.",
+  },
+
+  /**
+   * The fallback when the caller names no platform at all.
+   *
+   * Every other profile in this table answers a MEASURED channel: a geometry
+   * a real service was observed to return, and a step probed against that
+   * service's own quantization table. None of that changes here. This profile
+   * answers the one case those cannot -- the caller did not say where the
+   * image is going, so there is no table to match and no geometry to pre-empt.
+   *
+   * WHAT ACTUALLY FAILED, which was not what was expected. The diagnosis
+   * going in was margin: named profiles embed in zigzag 1-6 and lean on real
+   * platforms quantizing that band very finely (WhatsApp measured 6,6,6,7,6,7,
+   * which delta 28 clears with ~4x room), while a generic scaled Annex K table
+   * lands near 12-18 at q45 and leaves ~1.5x. The remedy that suggests is more
+   * redundancy, or failing that a bigger step.
+   *
+   * Measured, neither is the cause. On a 1920x1080 photo at 800 B, blind:
+   *
+   *   repeat   5 -> 40%     rsNsym 32 -> 60%      delta 28 -> 60%
+   *   repeat   9 -> 60%     rsNsym 64 -> 60%      delta 36 -> 60%
+   *   repeat  15 -> 60%     rsNsym 96 -> 60%      delta 40 -> 60%
+   *   repeat  21 -> 60%
+   *
+   * Three levers, all saturating at the same 60%, is not a margin problem.
+   * The cause is the adaptive texture ladder. It gives each block a step
+   * derived from its own quantized zigzag 25-40 activity, and the DECODER has
+   * to derive the same number from the image the channel handed back. A hard
+   * recompression crushes that band, so blocks migrate down a rung and every
+   * bit in a migrated block is read at the wrong step. Whole-block errors:
+   * majority voting and Reed-Solomon both assume sparse ones, which is why
+   * neither cleared it, and more amplitude does not help because the step
+   * being applied is the wrong step, not a small one.
+   *
+   * Smooth and gradient covers never showed it. Nearly every block there sits
+   * on the lowest rung with nothing near a boundary, so no rung can move --
+   * which is exactly why this reads as a busy-photo bug and stayed hidden.
+   *
+   * With the ladder off, delta 20, 24 and 28 survive IDENTICALLY -- 100% of
+   * the gauntlet on all three covers, and plain recompression holds to q20,
+   * twenty-five points past Heavy. Extra repetition changes nothing on any
+   * axis that could be measured, and both cost real PSNR (repeat 5 -> 9 was
+   * -1.2 dB on the photo, -2.3 dB on the gradient). So the profile takes the
+   * quietest setting that survives, not the strongest: delta 20 with the
+   * default repetition.
+   *
+   * The one thing a heavier setting did buy was an aggressive 0.55 downscale
+   * and restore, which needs delta 28 AND repeat 9+. That is well past the
+   * gauntlet's 0.7, and behaviour on the resize axis was non-monotonic
+   * between neighbouring settings -- the coin-flip signature §1 records for
+   * marginal QIM -- so it is luck rather than margin and is not worth 2 dB.
+   *
+   * width 0 leaves the cover at native geometry. There is no platform to
+   * match, so resizing would discard pixels for nothing, and it is what lets
+   * a like-for-like PSNR be computed at all: the contest scored invisibility
+   * "n/a" precisely because the encoder resized and left no same-dimension
+   * baseline to compare against.
+   */
+  robust: {
+    width: 0, square: false, delta: 20, lumaAcCount: 6, rsNsym: 32, repeat: 5,
+    // Off deliberately, and the single reason this profile survives where
+    // `universal` does not. Set explicitly rather than left to the default so
+    // it appears in the blind sweep's decode key -- see needsBundledDecode.
+    adaptive: false,
+    note:
+      "The default when no platform is named. No resize, step 20 -- a SMALLER step than " +
+      "Universal's 28, so this is quieter, not louder. What buys the robustness is turning " +
+      "off the adaptive texture ladder: the ladder picks each block's step from texture the " +
+      "decoder has to re-measure after the channel, and a hard recompression moves blocks " +
+      "between rungs, losing every bit in them at once. Flat stepping survives 100% of the " +
+      "local gauntlet on busy, gradient and smooth covers where the ladder managed 40%. " +
+      "Name your actual platform if you know it: the measured profiles match a real " +
+      "service's geometry and quantization table, which this cannot.",
   },
   /**
    * §27.4 TEST PROFILE: universal geometry at delta 20 instead of 28.
@@ -516,11 +650,23 @@ export const PLATFORM_PROFILES: Record<string, PlatformProfile> = {
 
 /**
  * Fallback for callers that name no platform -- the MCP server, the CLI, any
- * API user. It was "whatsapp_standard", which before this change meant an
- * agent that omitted the argument silently got the untuned encoder. Same
- * 1600px geometry, three times the perturbation.
+ * API user. It was "whatsapp_standard", which meant an agent that omitted the
+ * argument silently got the untuned encoder: same 1600px geometry, three
+ * times the perturbation. Then "universal", which is tuned, but tuned FOR
+ * something -- 1600px because WhatsApp returns 1600, step 28 because
+ * WhatsApp's table quantizes zigzag 1-6 at 6,6,6,7,6,7.
+ *
+ * That is the right answer when the image is going to WhatsApp and a guess
+ * when nobody said. Measured blind against generic recompression it scored
+ * 40%, and every failure was plain re-encoding rather than resizing -- a
+ * profile shaped around one channel's measurements, being asked about a
+ * channel nobody measured.
+ *
+ * So the fallback is now a profile whose premise is that the channel is
+ * unknown. Naming a platform still gets that platform's measured profile,
+ * unchanged; this only replaces the guess.
  */
-export const DEFAULT_PLATFORM = "universal";
+export const DEFAULT_PLATFORM = "robust";
 
 /**
  * Platforms worth putting in front of a user, in the order they should appear.
@@ -567,6 +713,7 @@ export const DEFAULT_PLATFORM = "universal";
  * lost completely.
  */
 export const USER_PLATFORMS: readonly string[] = [
+  "robust",          // no resize - the default when the channel is unknown
   "universal",       // 1600 - WhatsApp standard send, Twitter/X, Facebook
   "whatsapp_step20",    // 1600 at step 20 (§27.4) -- verified on device, WhatsApp only
   //"facebook_matched",   // 2048 on the Meta table (§17.12) -- TEST
@@ -588,8 +735,17 @@ export const USER_PLATFORMS: readonly string[] = [
  * cheaper than being wrong. 14 is retained so images produced by earlier
  * versions still open.
  */
-// Ordered by how likely each is in the wild: 56 is now the Instagram and
-// universal default, 28 the WhatsApp/Telegram default, 14 upstream's original.
+// Ordered by how likely each is in the wild. 28 is the default for every
+// shipping profile including Instagram, 20 for the robust fallback and the
+// step-20 profiles, 14 upstream's original.
+//
+// The order below still leads with 56, and that is deliberate rather than
+// stale: this list is only reached in phase 3 of the blind sweep, after every
+// profile has been tried as a whole bundle -- so 28 and 20 have already been
+// attempted with their real settings by the time it runs. What is left for
+// this list is mostly old images from the Instagram delta bracket, where 56
+// was the shipped value, so 56 first is right for the images that actually
+// reach here. 14 is retained so upstream's originals still open.
 export const DETECT_DELTAS: readonly number[] = [56, 28, 52, 48, 44, 40, 72, 24, 20, 14, 36];
 
 /**
@@ -608,22 +764,39 @@ export const DETECT_DELTAS: readonly number[] = [56, 28, 52, 48, 44, 40, 72, 24,
 export const INSTAGRAM_DELTA_CANDIDATES: readonly number[] = [28, 40, 56, 72];
 
 /**
- * Measured on real Instagram, August 2026, 1440x1440 square uploads:
+ * Read this as a sequence, not a contradiction. The shipped `instagram`
+ * profile is delta 28, and the bracket below says 28 FAILED. Both are true;
+ * the table changed in between.
+ *
+ * STEP 1 -- generic table, August 2026, 1440x1440 square uploads:
  *
  *   delta 28  FAIL      delta 40  FAIL      delta 56  PASS      delta 72  PASS
  *
- * The threshold sits between 40 and 56, so Instagram needs roughly TWICE
- * WhatsApp's step (26) despite having far gentler quantization (steps 5-25 vs
+ * The threshold sat between 40 and 56, so Instagram needed roughly TWICE
+ * WhatsApp's step (26) despite far gentler quantization (steps 5-25 vs
  * 6-167). Quantization was never the damage: Instagram sharpens after
  * processing, which perturbs exactly the mid-frequency coefficients QIM writes
  * to, and sharpening does not care how coarse the quantizer is.
  *
- * At 56 the embedding is visible on close inspection as a uniform grain rather
- * than localised dotting -- adaptive placement spreads energy into texture
- * instead of concentrating it in flat regions, so what remains reads as sensor
- * noise or JPEG artefacting. That clears "undetectable through normal viewing
- * or casual inspection"; it would not clear statistical steganalysis. Anyone
- * needing that should use a smaller payload rather than a smaller step.
+ * STEP 2 -- Instagram's OWN quantization table (§17.12), extracted from images
+ * it returned and byte-identical across all of them. Embedding and encoding on
+ * that lattice leaves its re-encode nothing to change: 100% of the embedding
+ * band survives against 85.9% on a generic table. On a real account that
+ * turned a failing channel into three consecutive clean round trips AT DELTA
+ * 28 -- the same step that had failed in step 1, on the same cover and
+ * payload.
+ *
+ * So matching the table HALVED the step Instagram requires, and the profile
+ * ships 28 with `quantTableZigzag` set. The bracket profiles below still
+ * carry the delta-56 configuration because images were made with it and the
+ * blind sweep has to keep finding them.
+ *
+ * The visibility note that used to sit here described delta 56 and no longer
+ * describes anything shipping: at 28 the perturbation is half what it was, and
+ * `whatsapp_step20` measures the payload's contribution above the JPEG noise
+ * floor at 0.47 for step 28 against 0.25 for step 20. None of that clears
+ * statistical steganalysis; anyone needing that should send a smaller payload
+ * rather than pick a smaller step.
  */
 
 export function profileFor(platform: string): PlatformProfile {

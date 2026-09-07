@@ -1,7 +1,7 @@
 # What this fork changes
 
 Against upstream `brunkstr/Stegstr` at fork point: **79 commits, 233 files,
-+21,311 / −875 lines.** 358 tests, `tsc --noEmit` clean, `npm run build` clean.
++21,311 / −875 lines.** 380 tests passing and 4 skipped, `tsc --noEmit` clean, `npm run build` clean.
 
 The organising claim: **an image only carries hidden data through a chat app if
 the encoder is matched to what that specific app does to photos.** Everything
@@ -168,7 +168,8 @@ for that reason.
 ## 2. Steganographic invisibility
 
 - **Texture-adaptive step size**: perturbation is scaled per block by local
-  texture, so more of it lands where the image can hide it.
+  texture, so more of it lands where the image can hide it. **Now off in the
+  default profile** — see the correction below.
 - **PSNR was rejected as the metric.** It ranked a visibly dotted image *above*
   a clean one (27.0 dB vs 26.1 dB) because it averages the whole frame and
   cannot see concentration. Human eyes and a masked-visibility metric
@@ -177,6 +178,89 @@ for that reason.
 - **Cover guidance in the product.** Fine detail is what hides data, and it is
   not a property users would guess at, so the app says so at both points where
   an image is chosen.
+
+---
+
+### The texture-adaptive ladder is a liability on a generic channel
+
+**Correction to the claim above.** Scaling the step per block was recorded here
+as an invisibility win with no downside. It has one, and on detailed covers
+through hard recompression it is worse than doing nothing at all.
+
+The ladder derives each block's step from that block's own quantized texture,
+and the decoder has to derive the *same* number from the image the channel
+handed back. A hard recompression flattens exactly the coefficients the
+measurement reads, so blocks migrate rung between embed and decode, and every
+bit in a migrated block is then read at the wrong step. Whole-block error —
+which is precisely what Reed–Solomon and majority voting cannot absorb, both
+being built on the assumption that errors are sparse and independent.
+
+Measured on a 1920×1080 photo carrying 800 bytes, blind, through five
+recompression profiles:
+
+```
+repeat   5 → 40%      rsNsym 32 → 60%      delta 28 → 60%
+repeat   9 → 60%      rsNsym 64 → 60%      delta 36 → 60%
+repeat  15 → 60%      rsNsym 96 → 60%      delta 40 → 60%
+repeat  21 → 60%
+```
+
+Three independent levers saturating at the same 60% is not a margin problem,
+and that is what identified the cause. With the ladder off, the same cover
+survives 100% — at delta 20, a *smaller* step than the ladder was nominally
+using, so the fix costs no invisibility. Steps 20, 24 and 28 then survive
+identically, and plain recompression holds down to quality 20.
+
+Smooth and gradient covers never showed any of this: nearly every block sits on
+the lowest rung with nothing near a boundary, so no rung can move. It is a
+detailed-photo failure, which is why it survived this long — and a reminder
+that "measured on a real photo" has to mean a photo with detail in it.
+
+The ladder stays on for the per-platform profiles, where the channel is known,
+the recompression is gentler than the worst case above, and the visibility
+argument still holds. It is off in `robust`, the new default.
+
+### A default that assumed a channel
+
+`DEFAULT_PLATFORM` was `universal` — 1600px, step 28. Both numbers are
+WhatsApp's: 1600 because that is what a standard send returns, 28 because
+WhatsApp's table quantizes the embedding band at 6,6,6,7,6,7 and 28 clears that
+with roughly 4× margin.
+
+That is the right answer for WhatsApp and a guess for anyone who did not say.
+Measured blind against generic recompression, the guess carried data through
+40% of the test profiles, and every failure was plain re-encoding rather than
+resizing — a profile shaped around one channel's measurements being asked about
+a channel nobody measured. A generic scaled Annex K table lands near 12–18 in
+that band at quality 45, leaving about 1.5× instead of 4×.
+
+The new `robust` profile does not resize, steps flat at 20, and is what any
+caller who names no platform now gets. It carries 100% on a busy photo, a
+gradient and a smooth cover. **No named profile changed** — geometry, step,
+zigzag band, parity and Instagram's matched table are all exactly as measured
+and verified on real devices, and there is now a test pinning all nine of them.
+
+### A profile field the decoder could not see
+
+`repeat` was forwarded to the decoder in the blind sweep and keyed in its
+deduplication, but nothing *selected* a profile into that phase on the strength
+of `repeat` alone. A profile carrying only a non-default repetition therefore
+fell through to the cheap phase, which passes step size and nothing else — so
+it embedded at its own value and decoded at the default, meaning it never
+decoded. Measured before the fix: a repeat-only profile blind-decoded to "No
+QIM payload found"; the same repetition alongside the other fields decoded
+first try.
+
+This is the third time this exact shape has appeared — `rsNsym` in §15.13,
+`activityBand`, and now `repeat`. The selection rule is extracted as
+`needsBundledDecode()` and asserted per field, so the next one fails a test
+instead of an image.
+
+`textureFloor` was the same defect one step earlier: declarable on a profile
+and read by nothing, so setting it did not do the wrong thing, it did nothing —
+while reading as a working switch. The profile field is removed; the option
+still exists and still works where the encoder actually reads it. A test now
+rejects any profile field the encoder does not forward.
 
 ---
 
@@ -197,6 +281,52 @@ API, so wiring was a one-line import change rather than surgery on a
 Also added: **NIP-44 v2**, verified against the official specification vectors,
 and a NIP-65 outbox-model router that reads an author from the relays *they*
 advertise.
+
+---
+
+### Telegram-as-photo verified, with its negative
+
+[`calibration/telegram_returns/`](calibration/telegram_returns/) — a send and
+its return from a real Telegram account, checksummed. A 1280×960 cover comes
+back 1280×960 and the payload reads back through the CLI. `telegram_photo` had
+the geometry right from inspecting returned files and had never round-tripped a
+payload; it has now. Telegram re-encodes on a scaled Annex K table near Q87,
+finer than the send-side table, so the embedding band survives.
+
+The negative is committed alongside it and is the more useful half: the same
+payload in a 4096×3072 cover comes back 1280×960 with nothing recoverable. The
+payload is provably present in the sent file and provably absent from the
+returned one, with only the downscale in between. A negative without its
+matching positive is not evidence — the pair is what rules out "the payload was
+never there".
+
+What it does **not** establish: the two Telegram returns carry different tables
+(3/31/15.0 and 4/19/12.2), so Telegram's re-encode quality is not fixed and no
+profile should be tuned against either as if it were a constant.
+
+### WhatsApp HD, and the rotation that would have been silent
+
+[`calibration/whatsapp_hd_returns/`](calibration/whatsapp_hd_returns/): a
+3840×2160 upload returns with its 3840 long edge intact, where the same
+pipeline's standard send caps a 4096px image at 1600×1200. The tables differ
+too — HD at 4/19/12.2, standard at 6/167/35.6 — across two geometries, so the
+send mode selects the table rather than the image size. This is the measurement
+behind `whatsapp_hd` being a separate profile; a stale comment calling it "an
+alias, not offered separately" has been corrected against the shipped values.
+
+The same pair shows WhatsApp **applying EXIF orientation physically and
+dropping the flag**: `orientation=6` at 3840×2160 in, 2160×3840 with no
+orientation tag out. A 90° rotation transposes the 8×8 grid, so a payload is
+not degraded but ended — measured here, an upright stego image decodes and the
+same image rotated 90° recovers nothing.
+
+This encoder is not exposed, because it rasterises through the same
+orientation-applying path and writes through canvas, which emits no EXIF: what
+leaves is already upright with no flag. That was true by accident rather than
+by intent, and is now held open by `src/__tests__/exif-orientation.test.ts`.
+Had it ever stopped being true, every payload sent to WhatsApp from a portrait
+phone photo would have died silently, and the failure would have looked like
+"the recipient's app finds nothing".
 
 ---
 
@@ -338,6 +468,32 @@ nine of them share one. Worst case dropped from **42 attempts to 22**.
 
 ---
 
+### A command-line tool that drives the shipped encoder
+
+The only CLI that shipped before was `stegstr-cli`, the Rust binary
+implementing the legacy PNG dot method — which does not survive chat apps.
+Anything driving Stegstr from a script (a harness, CI, an evaluator) therefore
+reached the one encoder this project exists to replace, and would measure it
+failing every channel.
+
+`stegstr` (`npm run build:cli`) calls the **shipped TypeScript QIM encoder** —
+the same code path as the UI and the MCP server, with no second implementation
+to drift out of step. It runs headless because the canvas polyfill supplies
+`OffscreenCanvas`, `ImageData` and `createImageBitmap`.
+
+Built to be driven by a machine: `--json` puts a structured object on stdout
+and every human-readable line on stderr, so the two cannot interleave; exit
+codes separate `2` payload-too-large, `3` written-but-unverifiable and `4`
+nothing-found, because collapsing those into one non-zero exit is how a harness
+reports a capacity limit as a codec failure.
+
+`judge_harness.py` in the repo root drives it through five recompression
+profiles and reports survival and PSNR — measuring the shipped encoder rather
+than a reimplementation of it. It names no platform by default, so what it
+reports is the blind case.
+
+---
+
 ## 6. Testing
 
 **Upstream's e2e harness validated only that permutation matrices were
@@ -348,9 +504,11 @@ A `@napi-rs/canvas` polyfill (OffscreenCanvas, ImageData, createImageBitmap)
 lets the **real shipped encoder** run under vitest, so embed → channel → detect
 is asserted in CI. That is what caught the delta=14 defect.
 
-**358 tests**, covering the encoder round-trip, the relay pool and outbox,
-NIP-44 against spec vectors, capacity packing, the review flow, the pointer
-tier, slot ordering, encrypted attachments, and the desktop bridge.
+**380 tests passing, 4 skipped**, covering the encoder round-trip, the relay
+pool and outbox, NIP-44 against spec vectors, capacity packing, the review
+flow, the pointer tier, slot ordering, encrypted attachments, EXIF orientation
+handling, and the desktop bridge. The four skips are a live-network suite,
+opt-in via `STEGSTR_LIVE=1`.
 
 Two of those suites exist because of specific blind spots. The desktop app
 cannot be rendered in CI — WebKitGTK cannot initialise GL headlessly — so every

@@ -90,9 +90,13 @@ describe("bracket profiles left the picker but not the decoder", () => {
     // list is the thing to update.
     const { USER_PLATFORMS } = await import("../stego-adaptive");
     expect([...USER_PLATFORMS].sort()).toEqual(
-      ["facebook", "facebook_matched", "instagram", "none", "telegram_file",
-       "telegram_photo", "twitter_step20", "universal", "whatsapp_step20",
-       "whatsapp_hd"].sort(),
+      // "robust" is offered as well as being the fallback: it is what the CLI
+      // and MCP server use when no platform is named, and a default that
+      // cannot be named explicitly is a default nobody can reproduce or
+      // compare against.
+      ["facebook", "facebook_matched", "instagram", "none", "robust",
+       "telegram_file", "telegram_photo", "twitter_step20", "universal",
+       "whatsapp_step20", "whatsapp_hd"].sort(),
     );
   });
 

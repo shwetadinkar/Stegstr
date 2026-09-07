@@ -74,13 +74,36 @@ describe("texture-selected block filling", () => {
     expect(Array.from(zero)).toEqual(Array.from(off));
   }, 120000);
 
-  it("no shipped profile enables it yet", async () => {
-    // It has never been through a platform. Shipping it on would be exactly
-    // the mistake §15.5 records: a change certified by CI and never seen by a
-    // phone.
+  it("is not declarable on a profile, because nothing would read it", async () => {
+    // It was declarable, and encodeQimImageFile never read it -- so setting it
+    // on a profile did nothing while looking like a switch. The field is gone;
+    // the QimOptions form above still works.
     const { PLATFORM_PROFILES } = await import("../stego-adaptive");
     for (const [name, prof] of Object.entries(PLATFORM_PROFILES)) {
-      expect(`${name}:${prof.textureFloor ?? "unset"}`).toBe(`${name}:unset`);
+      expect(`${name}:${"textureFloor" in prof}`).toBe(`${name}:false`);
+    }
+  });
+
+  it("no profile declares a field the encoder does not forward", async () => {
+    // The general form of the same bug. encodeQimImageFile reads a fixed list
+    // off the profile and passes it to embedQim; anything a profile declares
+    // that is NOT on that list is inert, and inert-but-plausible is how
+    // activityBand and textureFloor both shipped as no-ops.
+    //
+    // If you add a field to PlatformProfile, add it here and to the read list
+    // in encodeQimImageFile. If it also has to match at DECODE time, it goes
+    // in needsBundledDecode too, or images made with it never open.
+    const forwarded = new Set([
+      "width", "square", "note",            // used before embedding, not by it
+      "delta", "chromaDelta", "chromaChannels", "rsNsym", "lumaAcCount",
+      "slotOrder", "repeat", "adaptive", "activityBand", "quantTableZigzag",
+    ]);
+    const { PLATFORM_PROFILES } = await import("../stego-adaptive");
+    for (const [name, prof] of Object.entries(PLATFORM_PROFILES)) {
+      for (const key of Object.keys(prof)) {
+        expect(`${name}.${key}: forwarded`).toBe(
+          `${name}.${key}: ${forwarded.has(key) ? "forwarded" : "INERT"}`);
+      }
     }
   });
 });

@@ -274,8 +274,17 @@ describe("PLATFORM_WIDTHS", () => {
     // AC positions and rsNsym 128, roughly 2.5 AC positions modified per block
     // instead of one. An agent that omitted the argument silently got three
     // times the perturbation at the same geometry.
-    expect(DEFAULT_PLATFORM).toBe("universal");
-    expect(PLATFORM_WIDTHS[DEFAULT_PLATFORM]).toBe(1600);
+    //
+    // It is now "robust", and the reason is the next line down: the default
+    // is the profile used when the caller named no channel, so it must not be
+    // shaped around one. "universal" is 1600px and step 28 because WhatsApp
+    // returns 1600 and quantizes the embedding band at 6,6,6,7,6,7 -- correct
+    // for WhatsApp, a guess otherwise, and measured at 40% blind.
+    expect(DEFAULT_PLATFORM).toBe("robust");
+    // 0 = no resize. A default that resizes throws pixels away for a platform
+    // the caller never named, and leaves no same-dimension baseline for a
+    // PSNR comparison.
+    expect(PLATFORM_WIDTHS[DEFAULT_PLATFORM]).toBe(0);
   });
 
   it("every user-facing platform ships the tuned encoder, not the defaults", () => {
@@ -444,8 +453,15 @@ describe("PLATFORM_WIDTHS", () => {
       // geometry and step that embed on DIFFERENT lattices produce different
       // files and behave differently on a platform -- that is the whole of
       // §17.12, and omitting it here would call them duplicates.
+      // `adaptive` and `repeat` belong in the key for the same reason the
+      // table does: they change the bytes on disk. Without `adaptive`,
+      // `robust` and `telegram_file` hash the same -- both no-resize, step
+      // 20, zigzag 6, nsym 32 -- and the test calls them duplicates, when in
+      // fact one steps flat and the other scales every block by texture, and
+      // an image made by one does not decode as the other.
       const key = [
         p.width, p.square, p.delta, p.lumaAcCount, p.rsNsym, p.chromaDelta,
+        p.adaptive ?? true, p.repeat ?? "-",
         p.quantTableZigzag ? p.quantTableZigzag.join(",") : "-",
       ].join("|");
       const already = seen.get(key);

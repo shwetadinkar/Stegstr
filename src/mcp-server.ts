@@ -43,7 +43,7 @@ if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, "crypto", { value: webcrypto, writable: true });
 }
 
-const { PLATFORM_PROFILES, USER_PLATFORMS, profileFor } = await import("./stego-adaptive");
+const { PLATFORM_PROFILES, USER_PLATFORMS, profileFor, DEFAULT_PLATFORM } = await import("./stego-adaptive");
 const {
   encodeQimImageFile, decodeQimImageFile, getQimCapacityForFile, qimSelfTest,
 } = await import("./stego-qim");
@@ -208,7 +208,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     if (name === "stegstr_capacity") {
-      const platform = a.platform || "universal";
+      const platform = a.platform || DEFAULT_PLATFORM;
       const cap = await getQimCapacityForFile(await fileFrom(resolve(a.image_path)), platform);
       return ok(
         `Capacity for '${platform}': ${cap.capacityBytes} bytes ` +
@@ -217,7 +217,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     if (name === "stegstr_embed") {
-      const platform = a.platform || "universal";
+      const platform = a.platform || DEFAULT_PLATFORM;
       if (!(platform in PLATFORM_PROFILES)) {
         return fail(`Unknown platform '${platform}'. Options: ${USER_PLATFORMS.join(", ")}`);
       }

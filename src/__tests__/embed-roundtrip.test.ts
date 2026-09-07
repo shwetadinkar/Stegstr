@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { installCanvasPolyfill, makeCoverJpeg, simulateChannel } from "../node-canvas";
+import { installCanvasPolyfill, makeCoverJpeg, makeFile, simulateChannel } from "../node-canvas";
 
 installCanvasPolyfill();
 
@@ -117,4 +117,54 @@ describe("encoder round-trip (real shipped code path)", () => {
     const resized = await simulateChannel(stego, { maxWidth: 700, quality: 75 });
     expect(same(await detectQim(resized), p)).toBe(false);
   }, 90000);
+});
+
+/**
+ * The `robust` profile: the fallback when no platform is named.
+ *
+ * Its whole reason to exist is the case where the decoder is given no hints,
+ * so a self-test that passes the profile to both sides proves nothing. §15.13
+ * records exactly that trap costing a release: telegram_photo took rsNsym 32,
+ * the self-test kept passing because it knew the profile, and the images were
+ * unreadable to everyone else.
+ */
+describe("robust profile (unnamed-channel fallback)", () => {
+  it("decodes with NO platform hint at all", async () => {
+    const cover = makeFile(makeCoverJpeg(1024, 768));
+    const text = new TextEncoder().encode("robust blind round trip");
+    const blob = await encodeQimImageFile(cover, text, { platform: "robust" });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    // No options whatsoever -- the blind sweep has to find delta, lumaAcCount,
+    // rsNsym, repeat AND adaptive on its own.
+    const out = await decodeQimImageFile(makeFile(bytes));
+    expect(out.ok, out.error).toBe(true);
+  }, 180000);
+
+  it("decodes blind after the recompression the named profiles fail", async () => {
+    const cover = makeFile(makeCoverJpeg(1024, 768));
+    const text = new TextEncoder().encode("robust survives q45");
+    const blob = await encodeQimImageFile(cover, text, { platform: "robust" });
+    const received = await simulateChannel(new Uint8Array(await blob.arrayBuffer()),
+      { quality: 45 });
+    const out = await decodeQimImageFile(makeFile(received));
+    expect(out.ok, out.error).toBe(true);
+  }, 180000);
+
+  it("turns the texture ladder OFF, and that is what buys the survival", async () => {
+    // Not a style preference. The ladder gives each block a step chosen from
+    // its own quantized zigzag 25-40 activity, and BOTH sides have to derive
+    // the same number -- the decoder from the image the channel handed back.
+    // A hard recompression crushes that band, blocks migrate down a rung, and
+    // every bit in a migrated block is read at the wrong step. Measured on a
+    // 1920x1080 photo at 800 B: ladder on failed q45 at delta 28 AND at delta
+    // 40, ladder off passed at both. Whole-block errors, so neither
+    // repetition nor Reed-Solomon clears them and more amplitude does not
+    // either -- which is why this is the field that had to change.
+    expect(PROFILES.robust.adaptive).toBe(false);
+    // Every named profile keeps the ladder, i.e. this is additive.
+    for (const name of ["universal", "whatsapp_standard", "whatsapp_hd", "instagram",
+                        "telegram_photo", "facebook", "twitter", "telegram_file"]) {
+      expect(`${name}:${PROFILES[name].adaptive}`).toBe(`${name}:undefined`);
+    }
+  });
 });
