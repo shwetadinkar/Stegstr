@@ -2,6 +2,10 @@
 
 **Steganographic social networking.** Hide messages in images and share them anywhere — local-first, with optional Nostr sync.
 
+**[Read the measurements](https://dev.to/shwetadinkar/what-whatsapp-instagram-and-telegram-actually-do-to-your-photos-2gjd)** — what WhatsApp, Instagram and Telegram actually do to a photo, and how each platform profile here was derived.
+
+**[Try Stegstr](https://stegstr.com/r/UE8635)** — browser or desktop, nothing to sign up for.
+
 This fork adds one thing above all: **images that survive being sent through WhatsApp, Telegram and Instagram.** Those platforms re-encode every photo you send. An image that carries hidden data through your filesystem will usually lose it the moment it goes through a chat app. Every setting here was measured against the real platforms on a real phone, and the app ships the numbers that worked.
 
 ## What this fork adds
